@@ -59,6 +59,11 @@
   - [combineLatest](#combinelatest)
   - [zip](#zip)
   - [withLatestFrom](#withlatestfrom)
+  - [sample](#sample)
+  - [switchLatest](#switchlatest)
+  - [reduce](#reduce)
+- [14. Conditional Operators](#14-conditional-operators)
+  - [amb](#amb)
   
 ## 1. Observable & Observer
 
