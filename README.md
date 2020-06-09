@@ -3590,7 +3590,332 @@ Error Event의 경우 combineLatest 연산자와 마찬가지로 어느 한 Sour
 triggerObservable.withLatestFrom(dataObservable)
 ```
 
-이 연산자는 위와 같은 방식으로 사용한다. 연산자를 호출하는 Observable을 triggerObservable이라고 부르고, 파라미터로 전달하는 Observable을 dataObservable이라고 부른다. triggerObservable이 next event를 방출하면, data Observable이 가장 최근에 방출한 next event를 구독자에게 전달한다. 예를 들어 회원가입 버튼을 탭 하는 시점에 textField에 입력된 값을 가져오는 기능을 구현할 때 사용할 수 있다.
+이 연산자는 위와 같은 방식으로 사용한다. 연산자를 호출하는 Observable을 triggerObservable이라고 부르고, 파라미터로 전달하는 Observable을 dataObservable이라고 부른다. triggerObservable이 next event를 방출하면, data Observable이 가장 최근에 방출한 next event를 구독자에게 전달한다. 예를 들어 회원가입 버튼을 탭 하는 시점에 textField에 입력된 값을 가져오는 기능을 구현할 때 사용할 수 있다. 
+
+![스크린샷 2020-06-10 오전 4.22.41](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfmn7fuykfj30na0ncjyu.jpg)
+
+이 연산자는 두 형태로 사용한다.
+
+ 첫 번째는 data Observable과 클로저를 파라미터로 받는다. 클로저에는 두 Observable이 방출하는 요소가 전달되고, 여기에서 결과를 리턴한다. 연산자가 최종적으로 리턴하는 Observable은 클로저가 리턴하는 결과를 방출한다. 
+
+두 번째 형태는 trigger observable에서 next event를 전달하면, 파라미터로 전달한 데이터 Observable이 가장 최근에 방출한 next event를 가져온다. 그 다음 이벤트에 포함된 요소를 방출하는 Observable을 리턴한다. 
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+let trigger = PublishSubject<Void>()
+let data = PublishSubject<String>()
+
+trigger.withLatestFrom(data)
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+data.onNext("first") //#1
+data.onNext("last")
+
+trigger.onNext(())
+trigger.onNext(())
+//출력값
+//next(last)
+//next(last)
+
+data.onCompleted() //#2
+trigger.onNext(())
+//출력값
+//next(last)
+
+```
+
+data Observable이 `#1`에서 방출한 "first"는 구독자에게 전달되지 않고, trigger Observable이 next 이벤트를 방출한 시점의 data Observable의 가장 최근 방출된 next event의 요소인 "last"만이 전달된다.
+
+또한 코드에서처럼, withLatestFrom 연산자는 trigger Observable이 next event를 방출할 때마다 data Observable의 최근 next event 값을 구독자에게 전달한다. 때문에 trigger Observable에 next event를 전달할 때마다 구독자에게는 data Observable의 최근 방출 값인 "last"가 전달되고 있다. 중복되는 값이어도 상관 없이 전달된다. 
+
+이어 `#2`에서 data Observable에 Completed event를 전달한 뒤 trigger Observable에 next event를 전달했는데, 여전히 data Observable의 가장 최근 next Event 요소인 "last"가 구독자에게 전달되는 것을 볼 수 있다. 
+
+```swift
+data.onError(MyError.error) //#2-1
+//출력값
+//error(error)
+
+trigger.onNext(()) //#3
+//출력값 없음
+```
 
 
 
+`#2`의 completed event 대신 `#2-1`처럼 data Observable에 error event를 전달할 경우, trigger Observable이 next event를 방출하기 전이더라도 구독자에게 즉시 error event가 전달된다. 그 이후에는 trigger Observable이 Next Event를 방출하더라도 더 이상 어떤 값도 구독자에게 전달되지 않는다. 
+
+
+
+```swift
+trigger.onCompleted()
+//출력값
+//completed
+```
+
+이밖에 trigger Observable이 completed/error event를 전달할 경우에는 언제나 즉시 구독자에게 event가 전달된다.
+
+---
+
+### sample
+
+```swift
+dataObservable.sample(triggerObservable)
+```
+
+sample 연산자는 data Observable에서 연산자를 호출하고, 파라미터로 trigger Observable을 전달한다.
+
+ trigger Observable에서 next event를 전달할 때마다 data Observble이 자신의 최근 next event를 방출한다. 이 부분은 withLatestFrom 연산자와 동일하다. 하지만 동일한 next event를 반복해서 방출하지 않는다는 차이가 있다. 
+
+
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+let trigger = PublishSubject<Void>()
+let data = PublishSubject<String>()
+
+data.sample(trigger)
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+trigger.onNext(())
+data.onNext("first")
+//출력값 없음
+
+data.onNext("last")
+trigger.onNext(())
+//출력값
+//next(last)
+
+trigger.onNext(()) //#1
+//출력값 없음
+
+data.onCompleted() //#2
+//출력값 없음
+
+trigger.onNext(()) //#3
+//출력값
+//completed
+```
+
+
+
+`#1`의 trigger 연산자가 연달아 next event를 방출하더라도 중복되는 값이 다시 방출되지는 않는다.
+
+`#2`처럼 data Observable이 completed event를 전달하더라도 구독자에게는 어떤 값도 전달되지 않는다.
+
+`#3`에서 trigger Observable이 next event를 방출하는 시점에, data Observable의 completed event가 구독자에게 전달된다. withLatestFrom 연산자는 이 경우 completed 대신 data Observable이 completed 이벤트를 방출하기 이전의 next event 값을 방출하지만, sample 연산자는 최근 next event 대신 completed 이벤트를 구독자에게 전달한다.
+
+data Observable이 Error event를 전달할 경우에는 withLatestFrom 연산자와 마찬가지로 trigger Observable의 next event 방출 시점과 무관하게 그 즉시 구독자에게 error event를 전달한다.
+
+
+
+---
+
+### switchLatest
+
+가장 최근 Observable이 방출하는 Event를 구독자에게 전달한다. 어떤 Observable이 가장 최근 Observable인지 이해해야한다. 
+
+![스크린샷 2020-06-10 오전 4.56.29](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfmo6je228j30m60bgq5n.jpg)
+
+이 연산자는 파라미터가 없다. 그리고 주로 Observable을 방출하는 Observable에서 사용한다.
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+let a = PublishSubject<String>()
+let b = PublishSubject<String>()
+
+let source = PublishSubject<Observable<String>>()
+
+source
+  .switchLatest()
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+a.onNext("1")
+b.onNext("b")
+
+source.onNext(a) // #1
+//출력값 없음
+
+a.onNext("2") // #2
+b.onNext("b")
+//출력값
+//next(2)
+
+source.onNext(b) // #3
+a.onNext("3")
+b.onNext("c")
+//출력값
+//next(c)
+
+a.onCompleted() // #4
+b.onCompleted()
+//출력값 없음
+
+source.onCompleted() // #5
+//출력값
+//completed
+```
+
+
+
+switchLatest 연산자는 source Observable이 가장 최근에 방출한 Observable을 구독하고, 여기에서 전달하는 next event를 방출하는 새로운 Observable을 리턴한다. 
+
+`#1`에서 source Observable에 `a` Observable을 전달하면, `a` Observable이 최신 Observable이 된다. switchLatest 연산자는 최신 Observable인 `a`를 구독하고, `a`에서 방출되는 event를  구독자에게 전달한다. 
+
+이때 `#1`보다 이전에 `a`로 전달했던 "1"은 출력되지 않지만, 이후 전달한 `#2`의 "2"는 즉시 구독자에게 전달된다. 
+
+`#3`에서 source Observable에 next event로 `b`를 전달하면, switchLatest 연산자는 `a`에 대한 구독을 종료하고, `b`를 구독하기 시작한다. 
+
+`#3`의 출력값을 보면 switchLatest 연산자의 최신 Observable인 `b`가 방출한 next event인 "c"가 구독자에게 전달된 것을 확인할 수 있다. 
+
+`#4`처럼 `a`와 `b` 모두에게 Completed event를 전달해도 switchLatest 연산자는 구독자에게 completed event를 전달하지 않는다. 
+
+`#5`와 같이 source Observable에 completed 연산자를 전달해야 구독자에게 completed event가 전달된다.
+
+하지만 Error event의 경우에는, switchLatest 연산자의 최신 Observable이 error event를 전달하는 즉시 구독자에게 error 이벤트를 전달한다.
+
+
+
+---
+
+### reduce
+
+이 연산자는 scan 연산자와 비교하면 쉽게 이해할 수 있다. 
+
+아래는 scan 연산자를 사용한 예제 코드이다.
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+   case error
+}
+
+let o = Observable.range(start: 1, count: 5)
+
+print("== scan")
+
+o.scan(0, accumulator: +)
+   .subscribe { print($0) }
+   .disposed(by: bag)
+```
+
+scan 연산자는 위의 코드에서처럼 기본값과 source Observable이 방출하는 값을 대상으로 두 번째 파라미터로 전달한 accumulator closures를 실행한 이후 해당 클로저의 실행 결과를 Observable을 통해 방출하고, 다시 클로저로 전달한다. 
+
+source Observable이 새로운 요소를 방출하면, 이전 결과와 함께 클로저를 다시 실행한다. 이 과정이 반복되기 때문에 source Observable이 방출하는 이벤트의 수와 구독자로 전달되는 이벤트의 수가 같다. 
+
+주로 작업의 결과를 누적시키면서 중간 결과와 최종 결과가 모두 필요한 경우에 사용한다. 
+
+
+
+![스크린샷 2020-06-10 오전 5.19.39](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfmoumz6zqj30mq0c9dj9.jpg)
+
+reduce 연산자는 seed value와 accumulator 클로저를 파라미터로 받는다.   
+
+seed value와  source Observable이 방출하는 요소를 대상으로 클로저를 실행하고, result Observable을 통해 결과를 방출한다. 이 부분은 scan 연산자와 동일하다. accumulator 클로저의 실행결과가 클로저로 다시 전달되는 것 역시 동일하다. 
+
+하지만 reduce 연산자는 result Observable을 통해 최종 결과 하나만 방출한다. 중간 결과까지 모두 방출하는 scan 연산자와는 차이가 있다. 
+
+![스크린샷 2020-06-10 오전 5.23.45](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfmoywzgr2j30m20ecn1d.jpg)
+
+그리고 세 번째 파라미터로 클로저를 받는 reduce 연산자도 있는데, 최종 결과를 다른 형식으로 바꾸고 싶을 때 주로 사용한다. reduce 연산자 뒤에 map 연산자를 연결하는 것과 동일한 효과를 낼 수 있다. 
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+   case error
+}
+
+let o = Observable.range(start: 1, count: 5)
+
+print("== reduce")
+
+o.reduce(0, accumulator: +)
+.subscribe { print($0) }
+.disposed(by: bag)
+/* 출력값
+== reduce
+next(15)
+completed
+*/
+```
+
+결과를 보면, scan 연산자를 사용했을 때와는 달리 이번에는 최종 결과인 15만 출력된다. reduce 연산자와 scan 연산자의 가장 큰 차이이다. 중간 결과와 최종 결과가 모두 필요하다면 scan 연산자를 사용하고, 최종 결과 하나만 필요하다면 reduce 연산자를 사용한다. 
+
+---
+
+## 14. Conditional Operators
+
+### amb
+
+---
+
+amb는 두 개 이상의 source Observable 중에서 가장 먼저 next event를 전달한 Observable을 구독하고, 나머지는 무시한다. 
+
+![스크린샷 2020-06-10 오전 5.49.52](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfmpq2jg3zj30l90heq47.jpg)
+
+여러 개의 Source Observable 중에서 두 번째 source observable이 가장 먼저 next event를 전달하기 때문에, 나머지 Observable은 무시되고 두 번째 Observable만 구독자에게 전달된다. 
+
+amb 연산자를 이용하면 여러 서버로 한 번에 요청을 전달하고, 가장 빠른 응답을 처리하는 패턴을 구현할 수 있다. 
+
+![스크린샷 2020-06-10 오전 5.55.02](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfmpvig8acj30nj0ng797.jpg)
+
+아랫 부분에 선언되어있는 amb 연산자를 보면, 하나의 Observable을 파라미터로 받는다. 두 Observable 중에서 먼저 event를 전달하는 Observable을 구독하고, 이 Observable의 이벤트를 구독자에게 전달하는 새로운 Observable을 리턴한다. 
+
+만약 세 개 이상의 Observable을 대상으로 amb 연산자를 사용해야 한다면, 윗 부분의 Type method로 구현되어있는 연산자를 사용한다. 이 때는 모든 source Observable을 배열 형태로 전달해야한다.
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+let a = PublishSubject<String>()
+let b = PublishSubject<String>()
+let c = PublishSubject<String>()
+
+a.amb(b)
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+a.onNext("A")
+b.onNext("B")
+b.onCompleted()
+//출력값
+//next(A)
+a.onCompleted()
+//출력값
+//completed
+```
+
+
+
+이 경우 `a` subject가 `b` subject 보다 먼저 event를 방출한다. 그래서 amb는 `a` Observable을 구독하고,  `b`는 무시한다. 때문에 `a` subject가 전달한 next event만이 구독자에게 전달되었다. `b`가 전달한 completed event 역시 무시된다. 
+
+반면 a가 전달한 completed 이벤트는 즉시 구독자에게 전달되었다.
+
+```swift
+Observable.amb([a, b, c])
+  .subscribe { print($0) }
+  .disposed(by: bag)
+```
+
+만약 세 개 이상의 Observable에 대해 amb 연산자를 사용하고 싶다면 위와 같이 사용하면 된다. 
