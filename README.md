@@ -8,18 +8,11 @@
 
 Observable은 Event를 전달한다. 이 이벤트는 옵저버로 전달되고, 옵저버는 옵저버블에서 전달되는 이벤트를 처리한다. 이것을 구독한다고 표현한다. 그래서 옵저버를 구독자라고 부르기도 한다.
 
-
-
 옵저버가 구독을 시작하는 방법은, 옵저버블에서 subscribe method를 호출하는 것이다.
-
-
 
 subscribe method 역시 subscribe 연산자(operator)라고 부르기도 한다.
 
 subscribe method는 observer와 obervable을 연결한다. 두 요소를 연결해야 이벤트가 전달되므로, rxswift에서 가장 기초적이고 필수적인 요소이다.
-
-![스크린샷 2020-06-03 오후 8.51.34](https://tva1.sinaimg.cn/large/007S8ZIlgy1gffcg1a8ahj31t20u015f.jpg)
-
 
 
 ```swift
@@ -60,7 +53,6 @@ completed
 == End ==
 */
 ```
-
 
 
 그 외에, 이 메소드를 사용하는 방법도 있다. 
@@ -358,8 +350,6 @@ take 연산자와 filter 연산자의 순서를 바꿔 실행하면
 
 ## 4. Subject & Relay
 
-![스크린샷 2020-06-03 오후 9.49.50](https://tva1.sinaimg.cn/large/007S8ZIlgy1gffe4ljkvnj31jk0qm44p.jpg)
-
 Subject를 이해하기 위해서는 observable과 observer를 이해해야한다.
 
 Observable은 event를 전달한다.
@@ -371,16 +361,10 @@ observable은 observer와 달리 다른 옵져버블을 구독하지 못한다.
 마찬가지로 옵져버는 다른 옵저버로 이벤트를 전달하지 못한다.
 
 
-
-![스크린샷 2020-06-03 오후 9.52.09](https://tva1.sinaimg.cn/large/007S8ZIlgy1gffe70lpb0j31j80p0106.jpg)
-
 반면 Subject는 다른 옵져버블로부터 이벤트를 받아서 구독자로 전달할 수 있다.
 
 Subject는 옵저버블인 동시에 옵저버이다.
 
-
-
-![스크린샷 2020-06-03 오후 9.53.13](https://tva1.sinaimg.cn/large/007S8ZIlgy1gffe841z6yj30re0k20zz.jpg)
 
 RxSwift는 4가지 Subject를 제공한다.
 
@@ -393,8 +377,6 @@ ReplaySubject는 하나 이상의 최신 이벤트를 버퍼에 저장한다. �
 마지막 AsyncSubject는 Subject로 completed이벤트가 전달되는 시점에 마지막으로 전달된 Next event를 구독자로 전달한다. 
 
 
-
-![스크린샷 2020-06-03 오후 9.56.36](https://tva1.sinaimg.cn/large/007S8ZIlgy1gffebo4n59j30me09mq61.jpg)
 
 또한 RxSwift는 Subject를 래핑하고 있는 두 가지 Relay를 제공한다.
 
@@ -1034,17 +1016,12 @@ error(error)
 
 ## 9. Relays
 
-![스크린샷 2020-06-04 오전 2.58.16](https://tva1.sinaimg.cn/large/007S8ZIlgy1gffn1jesdmj31iy0peqah.jpg)
-
-
 
 RxSwift는 두 가지 Relay를 제공한다. Relay는 Subject와 유사한 특징을 가지고 있고, 내부에 Subject를 래핑하고 있다. 
 
 PublishRelay는 PublishSubject를, BehaviorRelay는 BehaviorSubject를 래핑하고 있다. 
 
 Relay는 Subject와 마찬가지로 Source로부터 이벤트를 전달 받아 구독자로 전달한다. 하지만 가장 큰 차이는 오직 Next Event만 전달할 수 있다는 것이다. 
-
-![스크린샷 2020-06-04 오전 3.00.56](https://tva1.sinaimg.cn/large/007S8ZIlgy1gffn4bcwrzj32130u0ndz.jpg)
 
 Completed 와 Error 이벤트는 전달 받지도, 전달 하지도 않는다. 그래서 Subject와 달리 구독자가 disposed 되기 전까지는 메모리에서 해제되지 않는다. 그래서 주로 UI Event 처리에 사용된다. 
 
