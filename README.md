@@ -65,6 +65,15 @@
 - [14. Conditional Operators](#14-conditional-operators)
   - [amb](#amb)
   
+- [15. Time Operators](#15-time-operators)
+  - [interval](#interval)
+  - [timer](#timer)
+  - [timeout](#timeout)
+  - [delay](#delay)
+  - [delaySubscription](#delaysubscription)
+
+
+
 ## 1. Observable & Observer
 
 Observable은 Event를 전달한다. 이 이벤트는 옵저버로 전달되고, 옵저버는 옵저버블에서 전달되는 이벤트를 처리한다. 이것을 구독한다고 표현한다. 그래서 옵저버를 구독자라고 부르기도 한다.
@@ -3924,3 +3933,424 @@ Observable.amb([a, b, c])
 ```
 
 만약 세 개 이상의 Observable에 대해 amb 연산자를 사용하고 싶다면 위와 같이 사용하면 된다. 
+
+
+
+---
+
+## 15. Time Operators
+
+### interval
+
+특정 주기마다 정수를 방출하는 Observable이 필요하다면 이 연산자를 활용한다. 
+
+![스크린샷 2020-06-11 오전 4.34.37](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfnt5xj5bzj30nj0ffwis.jpg)
+
+interval 연산자는 Type Method로 구현되어있다. 
+
+첫 번째 파라미터로 반복 주기를 받는다. 두 번째 파라미터는 정수를 방출할 스케쥴러를 받는다. 
+
+연산자가 리턴하는 Observable은 지정된 주기마다 정수를 반복적으로 방출한다. 
+
+종료시점을 지정하지 않기 때문에, 직접 dispose 하기 전까지 계속해서 방출한다. 방출하는 정수의 형태는 Int로 제한되지 않는다. 요소의 형식이 RxAbstarctInteger 형식인데, 이는 FixedWidthInteger와 같다. 그래서 Int를 포함한 다른 정수 형식을 모두 사용할 수 있다. 반대로 Double이나 문자열 형태는 사용할 수 없다. 
+
+```swift
+let i = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance)
+
+let subscription1 = i.subscribe { print("1 >> \($0)") } //#1
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+  subscription1.dispose()
+} //#2
+
+/*출력값
+1 >> next(0)
+1 >> next(1)
+1 >> next(2)
+1 >> next(3)
+1 >> next(4)
+*/
+
+var subscription2: Disposable?
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+  subscription2 = i.subscribe { print("2 >> \($0)") }
+} // #3
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+  subscription2?.dispose()
+} // #4
+
+/* 출력값 
+1 >> next(0)
+1 >> next(1)
+1 >> next(2)
+2 >> next(0)
+1 >> next(3)
+2 >> next(1)
+1 >> next(4)
+2 >> next(2)
+2 >> next(3)
+*/
+```
+
+
+
+`#1`과 같이 interval 연산자를 사용한 Observable을 구독하면, 1초마다 무한하게 정수가 구독자에게 전달된다. interval 연산자에는 종료시점이 없기 때문에 직접 종료해줘야하는데, `#2`와 같은 코드를 이용하여 종료시킬 수 있다. 
+
+interval 연산자가 생성하는 Observable은 내부에 타이머를 가지고 있다. 이 타이머가 시작되는 시점은 생성 시점이 아니다. 바로 구독자가 구독을 시작하는 시점이다. 
+
+그래서 Observable에 새로운 구독자가 추가될 때마다 새로운 타이머가 생성된다. 
+
+i에 새로운 구독자를 `#3`과 같이 2초 후에 추가하기로 하고, `#4`처럼 7초 뒤에 dispose 시키기로 하고 실행시킨 코드의 출력값을 보면 새로운 구독자가 추가될 때 새로운 타이머가 생성, 시작된다는 것을 알 수 있다. 
+
+
+
+---
+
+### timer
+
+timer 연산자는 interval 연산자와 마찬가지로 정수를 반복적으로 방출하는 Observable을 생성한다. 하지만 지연 시간과 반복 주기를 모두 지정할 수 있고, 두 값에 따라 동작 방식이 달라진다. 
+
+![스크린샷 2020-06-11 오전 4.51.44](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfntnresu2j30ok0f442h.jpg)
+
+timer 연산자도 Type Method로 구현되어 있다. 그리고 리턴되는 Observable이 방출하는 요소는 FixedWidthInteger 프로토콜을 채택한 형식으로 제한되어있다. 
+
+파라미터는 총 세 개가 선언되어있다. 
+
+첫 번째 파라미터는 첫 번째 요소가 방출되는 시점까지의 상대적인 시간이다. 구독을 시작하고 첫 번째 요소가 구독자에게 전달되기까지의 시간을 가리킨다. 첫 번째 파라미터에 1초를 전달하면, 구독을 시작하고 1초 뒤에 요소가 전달된다. 
+
+두 번째 파라미터는 반복 주기이다. 반복 주기는 기본값이 nil로 선언되어있다. 이 값에 따라서 timer 연산자의 동작 방식이 달라진다. 
+
+세 번째 파라미터에는 타이머가 동작할 스케쥴러를 전달한다. 
+
+
+
+```swift
+let bag = DisposeBag()
+
+Observable<Int>.timer(.seconds(1), scheduler: MainScheduler.instance) // #1
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+/*출력값
+next(0)
+completed
+*/
+```
+
+`#1`에서 timer 연산자에 첫 번째 파라미터로 전달한 `.seconds(1)`은  반복주기가 아니다. 구독 후 구독자에게 1초 후에 전달된다는 '지연 시간'을 나타낸다. 두 번째 파라미터가 반복 주기인데, `#1`에서처럼 생략되어있을 경우에는 하나의 요소만 방출한 뒤 종료된다. 
+
+그래서 실행결과를 보면 코드가 실행된지 1초 후에 하나의 요소를 방출하고 구독자에게 completed 이벤트가 즉시 전달되며 종료된다. 
+
+
+
+```swift
+let bag = DisposeBag()
+
+
+Observable<Int>.timer(.seconds(1), period: .milliseconds(500), scheduler: MainScheduler.instance)
+.subscribe { print($0) }
+.disposed(by: bag)
+
+/*출력값
+next(0)
+next(1)
+next(2)
+next(3)
+next(4)
+next(5)
+next(6)
+next(7)
+next(8)
+...
+(이하 생략)
+*/
+```
+
+이번에는 두 번째 파라미터인 반복주기를 전달한 timer 연산자의 용례이다. 
+
+이 경우 코드 실행 후 1초 뒤부터 0.5초마다 무한정 정수를 방출한다.
+
+timer 연산자도 종료 시점을 지정하지 않기 때문에 직접 종료시켜주어야 한다.
+
+
+
+---
+
+
+
+### timeout 
+
+![스크린샷 2020-06-11 오전 5.29.32](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfnur2x9w3j30nu0bdjul.jpg)
+
+timeout 연산자는 source Observable이 방출하는 모든 요소에 timeout 정책을 적용한다. 첫 번째 파라미터로 timeout 시간을 전달하는데, 이 시간 안에 next event를 방출하지 않으면 error event를 전달하고 종료된다. 
+
+error 형식은 표기되어있는 것처럼 `RxError.timeout`이다. 반대로 timeout 시간 이내에 새로운 이벤트를 방출하면, 구독자에게 그대로 전달한다. 
+
+
+
+![스크린샷 2020-06-11 오전 5.31.46](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfnutfokskj30ml0d4wiu.jpg)
+
+세 개의 파라미터를 받는 timeout 연산자도 선언되어있는데, 두 번째 파라미터로 Observable을 전달하는 것을 제외하면 나머지는 동일하다. 
+
+여기에서는 timeout이 발생하면 error event를 전달하는 것이 아니라 구독 대상을 두 번째 파라미터로 전달한 Observable로 교체한다. 
+
+```swift
+let bag = DisposeBag()
+
+let subject = PublishSubject<Int>()
+
+subject.timeout(.seconds(3), scheduler: MainScheduler.instance) // #1
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+Observable<Int>.timer(.seconds(1), period: .seconds(1), scheduler: MainScheduler.instance)
+// #2
+  .subscribe(onNext: { subject.onNext($0) })
+  .disposed(by: bag)
+
+/*출력값
+next(0)
+next(1)
+next(2)
+next(3)
+next(4)
+*/
+```
+
+
+
+`#1`은 PublishSubject인 subject에 timeout 연산자로 제한 시간 3초를 준 코드이다. 
+
+`#2`에서 timer 연산자를 이용해서 '코드 실행 후 1초 뒤부터', '1초마다 반복해서', 'MainScheduler에서 실행' 하는 정수 방출 Observable을 만들고, 이 Observable이 방출하는 next event의 element를 subject에게 next event에 담아 전달하고 있다.
+
+이 때는 timeout 시간 이내에 새로운 next event가 subject로 전달되기 때문에 계속해서 구독자에게 전달되고, 에러 이벤트는 발생하지 않는다. 
+
+
+
+```swift
+let bag = DisposeBag()
+
+let subject = PublishSubject<Int>()
+
+subject.timeout(.seconds(3), scheduler: MainScheduler.instance)
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+Observable<Int>.timer(.seconds(5), period: .seconds(1), scheduler: MainScheduler.instance)
+  .subscribe(onNext: { subject.onNext($0) })
+  .disposed(by: bag)
+
+//출력값
+//error(Sequence timeout.)
+```
+
+하지만 만약 이 코드처럼 Observable이 정수를 방출하기 시작하는 시점을 코드 실행 후 5초 뒤로 설정하면, 코드 실행 3초 후에 error event를 구독자에게 전달하고 종료한다. 3초 내에 이벤트가 전달되지 않았기 때문이다. 
+
+
+
+```swift
+let bag = DisposeBag()
+
+let subject = PublishSubject<Int>()
+
+subject.timeout(.seconds(3), scheduler: MainScheduler.instance)
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+Observable<Int>.timer(.seconds(2), period: .seconds(5), scheduler: MainScheduler.instance)
+  .subscribe(onNext: { subject.onNext($0) })
+  .disposed(by: bag)
+
+/*출력값
+next(0)
+error(Sequence timeout.)
+*/
+```
+
+이 코드의 경우 Observable이 코드 실행 2초 뒤에 최초의 next event로 정수를 방출하고, 그 다음부터는 5초의 반복 주기로 정수를 방출한다. 
+
+이 경우 Observable의 첫 번째 next event는 subject의 timeout 시간 내에 전달되기 때문에 subject의 구독자에게 전달되지만, Observable의 두 번째 이벤트는 그로부터 5초 후에 방출되기 때문에 timeout의 제한시간을 초과하게 된다. 그래서 이 경우에는 error 이벤트를 방출한다. 
+
+
+
+
+
+```swift
+let bag = DisposeBag()
+
+let subject = PublishSubject<Int>()
+
+// #1
+subject.timeout(.seconds(3), other: Observable.just(0), scheduler: MainScheduler.instance)
+.subscribe { print($0) }
+.disposed(by: bag)
+
+// #2
+Observable<Int>.timer(.seconds(2), period: .seconds(5), scheduler: MainScheduler.instance)
+  .subscribe(onNext: { subject.onNext($0) })
+  .disposed(by: bag)
+
+/*출력값
+next(0) //정수 방출 Observable이 subject에게 전달한 이벤트
+next(0) //timeout이 발생하여 구독 대상이 된 timeout의 'other' Observable이 방출한 이벤트
+completed //other Observable이 just 연산자로 0을 방출한 뒤 전달한 이벤트
+*/
+```
+
+만약 timeout의 제한시간을 초과했을 때 구독자에게 error event 대신 0을 전달하고 싶다면 timeout의 두 번째 파라미터를 활용하면 된다. 
+
+`#1`에서 timeout의 두 번째 연산자로 0을 방출하고 종료하는 Observable을 전달해주었는데, 
+
+결과를 보면 구독자에게 next event가 두 번 전달되고 completed event가 전달되었다. 
+
+
+
+출력값의 첫 번째 이벤트는 subject가 `#2`의 Observable로 부터 전달 받은 이벤트이다. 하지만 이후 전달 받을 이벤트는 5초 뒤에 방출되기 때문에 그 전에 timeout의 제한 시간을 초과한다. 
+
+출력값의 두 번째 next event는 정수를 방출하는 Observable로부터 전달 받은 것이 아니라, timeout으로 인해 구독 대상이 된 timeout 연산자의 두 번째 파라미터인 other Observable이 방출한 것이다. timeout의 두 번째 파라미터로 Observable을 전달하면, timeout이 발생한 시점에 그 Observable이 구독 대상으로 설정된다. 그리고 이 Observable이 전달하는 event가 구독자에게 전달된다. 
+
+이어서 마지막으로 other Observable이 just(0)을 방출한 뒤 전달한 completed 이벤트가 구독자에게 전달되었다. 
+
+
+
+---
+
+### delay
+
+
+
+![스크린샷 2020-06-11 오전 6.21.01](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfnwwcmig1j30n50cc0w0.jpg)
+
+delay 연산자는 next event가 구독자로 전달되는 시점을 지정한 시간만큼 지연시킨다. 
+
+첫 번째 파라미터에는 지연시킬 시간을 전달하고, 
+
+두 번째 파라미터에는 delay 타이머를 실행할 스케쥴러를 전달한다. 
+
+연산자 리턴하는 Observable은 원본 Observable과 동일한 형식을 가지고 있지만, next event가 구독자에게 전달되는 시점이 첫 번째 파라미터에 전달한 시간만큼 지연된다. 
+
+그리고 위 설명에 나와있는대로, error event는 지연되지 않고 즉시 전달된다. 
+
+```swift
+let bag = DisposeBag()
+
+func currentTimeString() -> String {
+  let f = DateFormatter()
+  f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+  return f.string(from: Date())
+}
+
+Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance)
+  .take(10)
+  .debug()
+  .delay(.seconds(5), scheduler: MainScheduler.instance) //#1
+  .subscribe { print(currentTimeString(), $0) } //#2
+  .disposed(by: bag)
+
+/* 출력값
+2020-06-11 06:24:50.787: delay.playground:40 (__lldb_expr_494) -> subscribed
+2020-06-11 06:24:51.814: delay.playground:40 (__lldb_expr_494) -> Event next(0)
+2020-06-11 06:24:52.814: delay.playground:40 (__lldb_expr_494) -> Event next(1)
+2020-06-11 06:24:53.814: delay.playground:40 (__lldb_expr_494) -> Event next(2)
+2020-06-11 06:24:54.814: delay.playground:40 (__lldb_expr_494) -> Event next(3)
+2020-06-11 06:24:55.815: delay.playground:40 (__lldb_expr_494) -> Event next(4)
+2020-06-11 06:24:56.814: delay.playground:40 (__lldb_expr_494) -> Event next(5)
+
+2020-06-11 06:24:56.815 next(0) 
+// #3
+
+2020-06-11 06:24:57.814: delay.playground:40 (__lldb_expr_494) -> Event next(6)
+2020-06-11 06:24:57.816 next(1)
+2020-06-11 06:24:58.814: delay.playground:40 (__lldb_expr_494) -> Event next(7)
+2020-06-11 06:24:58.817 next(2)
+2020-06-11 06:24:59.814: delay.playground:40 (__lldb_expr_494) -> Event next(8)
+2020-06-11 06:24:59.818 next(3)
+2020-06-11 06:25:00.814: delay.playground:40 (__lldb_expr_494) -> Event next(9)
+2020-06-11 06:25:00.815: delay.playground:40 (__lldb_expr_494) -> Event completed
+2020-06-11 06:25:00.815: delay.playground:40 (__lldb_expr_494) -> isDisposed
+2020-06-11 06:25:00.819 next(4)
+2020-06-11 06:25:01.820 next(5)
+2020-06-11 06:25:02.822 next(6)
+2020-06-11 06:25:03.823 next(7)
+2020-06-11 06:25:04.825 next(8)
+2020-06-11 06:25:05.826 next(9)
+2020-06-11 06:25:05.827 completed
+*/
+```
+
+위 코드는 정수를 매 초 방출하는 Observable을 만들고, take 연산자를 이용하여 전달할 next event를 10개로 제한한 것이다. 
+
+그 상태에서 `#1`처럼 delay 연산자를 호출하는데, 지연 시킬 시간은 5초로 설정했다. delay 연산자는 구독시점을 연기하지는 않는다. 
+
+구독자가 추가되면 바로 시퀀스가 시작된다. 로그를 보면 Observable이 1초마다 계속 next event를 방출하고 있다는 걸 확인할 수 있다. 하지만 `#2`의 구독자에서 추가한 로그는 출력되지 않고 있다. 
+
+구독자에서 추가한 로그는 `#3`에서 확인할 수 있는데, 원본 Observable이 최초의 event를 방출한지 5초 후에 출력되었다. 다시 말해 원본 Observable이 방출한 next 이벤트가 5초 뒤에 구독자에게 전달된 것이다.
+
+delay 연산자는 이렇게 원본 Observable에서 next event가 방출된 다음에 구독자로 전달되는 시점을 지연시킨다. (구독한 시점부터 바로 지연시키는 게 아님)
+
+
+
+---
+
+### delaySubscription
+
+
+
+만약 구독자로 전달되는 시점이 아니라 구독 시작시점 자체를 지연시키고 싶다면 delaySubscription 연산자를 사용한다. 
+
+```swift
+let bag = DisposeBag()
+
+func currentTimeString() -> String {
+  let f = DateFormatter()
+  f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+  return f.string(from: Date())
+}
+
+Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance)
+  .take(10)
+  .debug()
+  .delaySubscription(.seconds(7), scheduler: MainScheduler.instance)
+  .subscribe { print(currentTimeString(), $0) }
+  .disposed(by: bag)
+
+/*출력값
+2020-06-11 06:37:02.302: delaySubscription.playground:40 (__lldb_expr_501) -> subscribed
+2020-06-11 06:37:03.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(0)
+2020-06-11 06:37:03.304 next(0)
+2020-06-11 06:37:04.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(1)
+2020-06-11 06:37:04.304 next(1)
+2020-06-11 06:37:05.303: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(2)
+2020-06-11 06:37:05.304 next(2)
+2020-06-11 06:37:06.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(3)
+2020-06-11 06:37:06.305 next(3)
+2020-06-11 06:37:07.305: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(4)
+2020-06-11 06:37:07.305 next(4)
+2020-06-11 06:37:08.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(5)
+2020-06-11 06:37:08.304 next(5)
+2020-06-11 06:37:09.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(6)
+2020-06-11 06:37:09.304 next(6)
+2020-06-11 06:37:10.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(7)
+2020-06-11 06:37:10.304 next(7)
+2020-06-11 06:37:11.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(8)
+2020-06-11 06:37:11.305 next(8)
+2020-06-11 06:37:12.304: delaySubscription.playground:40 (__lldb_expr_501) -> Event next(9)
+2020-06-11 06:37:12.304 next(9)
+2020-06-11 06:37:12.305: delaySubscription.playground:40 (__lldb_expr_501) -> Event completed
+2020-06-11 06:37:12.305 completed
+2020-06-11 06:37:12.305: delaySubscription.playground:40 (__lldb_expr_501) -> isDisposed
+*/
+```
+
+
+
+이 경우 코드 실행 이후 delaySubscription의 파라미터로 준 7초 동안은 아무런 로그도 출력되지 않는다. 그러다가 7초가 지나면 원본 Observable이 next event를 방출하기 시작한다. 
+
+그렇게 방출되기 시작한 next event들은 어떠한 지연도 없이 구독자에게 바로 전달된다. 
+
+delaySubscription은 구독 시점을 지연시킬 뿐 next event가 전달되는 시점은 지연시키지 않는다.
+
+
+
