@@ -65,7 +65,7 @@
 - [14. Conditional Operators](#14-conditional-operators)
   - [amb](#amb)
   
-- [15. Time Operators](#15-time-operators)
+- [15. Time-based Operators](#Time-based-Operators)
   - [interval](#interval)
   - [timer](#timer)
   - [timeout](#timeout)
@@ -3938,7 +3938,7 @@ Observable.amb([a, b, c])
 
 ---
 
-## 15. Time Operators
+## 15. Time-based Operators
 
 ### interval
 
