@@ -2,6 +2,8 @@
 ---
 이 레포는 RxSwift 공부를 하며 정리한 내용입니다.
 
+
+
 # RxSwift 정리
 
 목차
@@ -64,8 +66,7 @@
   - [reduce](#reduce)
 - [14. Conditional Operators](#14-conditional-operators)
   - [amb](#amb)
-  
-- [15. Time-based Operators](#Time-based-Operators)
+- [15. Time-based Operators](#15-time-based-operators)
   - [interval](#interval)
   - [timer](#timer)
   - [timeout](#timeout)
@@ -73,6 +74,8 @@
   - [delaySubscription](#delaysubscription)
 
 
+
+---
 
 ## 1. Observable & Observer
 
