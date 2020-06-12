@@ -72,6 +72,13 @@
   - [timeout](#timeout)
   - [delay](#delay)
   - [delaySubscription](#delaysubscription)
+- [16. Sharing Subscription](#16-sharing-subscription)
+  - [multicast Operator](#multicast-operator)
+    - [connect Method](#connect-method)
+  - [publish](#publish)
+  - [replay](#replay)
+  - [refCount](#refcount)
+  - [share](#share)
 
 
 
@@ -4356,4 +4363,835 @@ Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance)
 delaySubscription은 구독 시점을 지연시킬 뿐 next event가 전달되는 시점은 지연시키지 않는다.
 
 
+
+
+
+---
+
+## 16. Sharing Subscription
+
+RxSwift에서는 하나의 Observable을 여러 구독자가 구독할 경우 모든 구독자에 대해 각각의 구독 시점마다 Observable의 개별적인 시퀀스가 시작되고 전달된다. 
+
+하지만 어떤 경우에는 모든 구독자가 하나의 시퀀스를 공유하는 것이 더 효율적일 때가 있다.
+
+그래서 RxSwift에는 구독 공유를 통해 불필요한 작업을 방지할 수 있는 다양한 연산자가 있다.
+
+---
+
+### multicast Operator
+
+
+
+```swift
+let bag = DisposeBag()
+let subject = PublishSubject<Int>()
+
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).take(5)
+
+source
+   .subscribe { print("🔵", $0) }
+   .disposed(by: bag)
+
+source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+   .disposed(by: bag)
+
+/* 출력값
+🔵 next(0)
+🔵 next(1)
+🔵 next(2)
+🔵 next(3)
+🔴 next(0)
+🔵 next(4)
+🔵 completed
+🔴 next(1)
+🔴 next(2)
+🔴 next(3)
+🔴 next(4)
+🔴 completed
+*/
+```
+
+ 위의 코드는 1초마다 한 개씩 총 5개의 정수를 방출하는 Observable에 두 개의 구독자가 추가되어있는 형태이다. 다만 두 번째 구독은 `delaySubscription`연산자를 통해 3초 지연되고 있다. 
+
+Observable은 새로운 구독자가 구독을 시작할 때마다 새로운 시퀀스가 시작된다. 출력값을 보면 두 개 구독자가 0에서 4까지 5개의 정수를 각각 출력한다. 두 개의 시퀀스가 개별적으로 시작되었고, 서로 공유되지 않고 있다. 이것이 RxSwift의 가장 규칙이다. 
+
+
+
+이 때 여러 구독자에게 하나의 시퀀스를 공유하는 연산자 중 하나가 multicast 연산자이다. 
+
+![스크린샷 2020-06-12 오전 6.28.09](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp22ga1xjj30og0xt48b.jpg)
+
+multicast 연산자는 Subject를 파라미터로 받는다. 
+
+원본 Observable이 방출하는 이벤트는 구독자에게 전달되는 것이 아니라 이 서브젝트로 전달된다. 그리고 subject는 전달 받은 이벤트를 등록된 다수의 구독자에게 전달한다. 기본적으로 unicast 방식(수신자와 발신자가 1:1관계인 네트워크 통신의 한 방식)으로 동작하는 Observable을 multicast 방식으로 바꿔주는 것이다. 
+
+이것을 위해서 특별한 형식의 Observable을 리턴한다. multicast 연산자의 리턴 형식은 ConnectableObservable로 선언되어 있는 걸 볼 수 있는데, ConnectableObservable은 일반적인 Observable과 구분되는 특징을 가지고 있다. 
+
+일반 Observable은 구독자가 추가되면 새로운 시퀀스가 시작된다.(== 이벤트 방출을 시작한다.) 
+
+하지만 ConnectableObservable은 시퀀스가 시작되는 시점이 다르다. 구독자가 추가되어도 시퀀스가 시작되지 않는다. Connect method를 실행하는 시점에 시퀀스가 시작된다. 
+
+따라서 원본 Observable이 전달하는 이벤트는 구독자에게 바로 전달되는 것이 아니라 첫 번째 파라미터로 전달한 subject로 전달된다. 그리고나서 이 subject가 등록된 모든 구독자들에게 이벤트를 전달한다.
+
+이렇게 동작하기 때문에 모든 구독자가 등록된 이후에 하나의 시퀀스를 시작하는 패턴을 구현할 수 있다. 
+
+ConnectableObservableAdaptor는 원본 Observable과 subject를 연결해주는 특별한 class 이다.
+
+
+
+```swift
+let bag = DisposeBag()
+let subject = PublishSubject<Int>()
+
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).take(5).multicast(subject) // #1
+
+source
+  .subscribe { print("🔵", $0) }
+  .disposed(by: bag)
+
+source
+  .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+  .subscribe { print("🔴", $0) }
+  .disposed(by: bag)
+//여기까지 실행시 출력값 없음
+
+source.connect() //#2
+/*출력값
+🔵 next(0)
+🔴 next(0)
+🔵 next(1)
+🔴 next(1)
+🔵 next(2)
+🔴 next(2)
+🔵 next(3)
+🔴 next(3)
+🔵 next(4)
+🔴 next(4)
+🔵 completed
+🔴 completed
+*/
+```
+
+이제 위의 코드의 `#1`부분에 multicast 연산자를 사용하고 파라미터로 PublishSubject인 `subject`를 전달한다. 이러면 `source`에는 일반 Observable이 아니라 ConnectableObservable이 저장된다. 
+
+그리고 코드를 실행해보면, 아무것도 출력되지 않는다. 
+
+왜냐면 ConnectableObservable은 단순히 구독자가 추가되었다고 해서 시퀀스를 시작하지 않기 때문이다. 반드시 `#2`에서처럼 원본 Observable에 대해 connect 메소드를 명시적으로 실행해야 시퀀스가 시작된다. 
+
+- multicast 연산자의 동작 순서
+  - 원본 Observable에서 시퀀스가 시작되면, 
+  - 모든 이벤트는 파라미터로 전달한 subject로 전달된다. 그리고 이 subject는 등록된 모든 구독자에게 이벤트를 전달한다. 
+  - 여기까지의 모든 과정은 connect method가 실행되는 시점에 시작된다.
+
+`#2`까지의 코드를 작성하고 실행해보면, 출력값이 이전과는 다르다. 
+
+두 번째 구독자는 코드 실행 시점으로부터 3초 뒤에 `source` Observable에 대한 구독을 시작하는데, 출력된 결과를 보면 구독 시작 후 `source` Observable로부터 받은 첫 next event의 값이 `2`라는 걸 확인할 수 있다. 
+
+multicast 연산자를 사용하지 않는 경우 구독자마다 개별 시퀀스가 시작되기 때문에, 두 번째 구독자 같은 경우에도 구독 시점 지연과 무관하게 완전한 시퀀스를 전달 받을 수 있었다. 
+
+지금과 같은 경우에는 multicast 연산자를 사용하여 원본 Observable을 ConnectableObservable로 바꾸었다. 그러면 모든 구독자가 원본 Observable을 공유하게 된다. 
+
+그래서 두 번째 구독자의 구독이 지연되는 3초 동안 원본 Observable이 전달한 두 개의 이벤트는 두 번째 구독자에게 전달되지 않는다. 두 번째 구독자가 처음으로 받게 되는 이벤트는 `2`가 저장되어 있는 next event이다. 
+
+#### connect Method
+
+![스크린샷 2020-06-12 오전 9.02.20](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp6iu81hij30mn06v0ui.jpg)
+
+connect 메소드의 리턴형을 보면, Disposable을 리턴하도록 되어있다.
+
+그래서 원하는 시점에 dispose method를 실행하여 공유 시퀀스를 중지하거나 다른 Observable들처럼 disposeBag에 넣어 리소스를 정리할 수 있다.
+
+![스크린샷 2020-06-12 오전 9.03.09](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp6jo8rk7j30d903pdgy.jpg)
+
+multicast 연산자는 하나의 Observable을 공유할 때 사용하는 가장 기본적인 연산자이다. 
+
+원하는 기능을 자유롭게 구현할 수 있지만 subject를 직접 만들어야하고 connect 메소드를 직접 호출해야한다는 점에서 번거롭다. 그래서 multicast Operator를 직접 사용하기보다 이 연산자를 활용하는 다른 연산자들을 주로 사용한다. 
+
+
+
+---
+
+### publish
+
+
+
+![스크린샷 2020-06-12 오전 9.18.04](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp6z8702rj30mg0aldia.jpg)
+
+
+
+publish 연산자는 간단하다. 바로 위의 multicast 연산자를 호출하고, 새로운 PublishSubject를 만들어서 파라미터로 전달한다. 그러면 multicast가 리턴하는 ConnectableObservable을 그대로 리턴한다. 
+
+
+
+```swift
+let bag = DisposeBag()
+//let subject = PublishSubject<Int>() // #2
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).take(5).publish() // #1
+
+source
+   .subscribe { print("🔵", $0) }
+   .disposed(by: bag)
+
+source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+   .disposed(by: bag)
+
+source.connect() // #3
+
+/*출력값
+🔵 next(0)
+🔵 next(1)
+🔵 next(2)
+🔴 next(2)
+🔵 next(3)
+🔴 next(3)
+🔵 next(4)
+🔴 next(4)
+🔵 completed
+🔴 completed
+*/
+```
+
+multicast 연산자에서 사용했던 코드에서 `#1`에 사용했었던 multicast operator 대신 publish 연산자를 사용했다. 
+
+publish 연산자 내부에서 PublishSubject를 생성하고, multicast 연산자로 전달해주기 때문에 별도의 파라미터를 전달해줄 필요가 없다. 그래서 `#2`의 `subject`는 필요 없어진다. 
+
+실행 결과 역시 당연히 multicast 연산자를 설명할 때 사용했던 코드와 동일하다. 
+
+multicast 연산자는 Observable을 공유하기 위해서 내부적으로 subject를 사용한다. 
+
+만약 multicast 연산자를 사용하며 파라미터로 PublishSubject를 전달한다면, publish 연산자를 사용하는 편이 코드가 단순해진다는 점에서 더 좋다. 
+
+PublishSubject를 자동으로 생성해준다는 걸 제외하면 multicast연산자와 동일하다.
+
+그래서 connect method를 호출하는 `#3`구문은 절대 생략할 수 없다. 
+
+
+
+---
+
+### replay
+
+
+
+우선 ConnectableObservable에 Buffer를 추가하고, 새로운 구독자에게 최근 이벤트를 전달하는 방법을 알아보고나서 replay 연산자를 활용해서 코드를 단순하게 바꿔보자.
+
+
+
+multicast 연산자를 구현할 때 사용했던 코드를 다시 가져왔다.
+
+```swift
+let bag = DisposeBag()
+let subject = PublishSubject<Int>() // #1
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).take(5).multicast(subject)
+
+source
+   .subscribe { print("🔵", $0) }
+   .disposed(by: bag)
+
+source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+   .disposed(by: bag)
+
+source.connect()
+
+/*출력값
+🔵 next(0)
+🔵 next(1)
+🔵 next(2)
+🔴 next(2)
+🔵 next(3)
+🔴 next(3)
+🔵 next(4)
+🔴 next(4)
+🔵 completed
+🔴 completed
+*/
+```
+
+이번에는 multicast 연산자에 파라미터로 전달하는 `subejct`에 집중해보자.
+
+connect 메소드가 실행되는 시점에 원본 Observable에서 시퀀스가 시작되고, 구독자에게 이벤트가 전달되기 시작한다. 
+
+첫 번째 구독자는 지연 없이 즉시 구독을 시작하기 때문에 모든 이벤트를 전달 받는다.
+
+하지만 두 번째 구독자는 3초 뒤에 구독을 시작한다. 그래서 구독 전에 `subject`가 전달한 이벤트는 전달 받지 못한다.
+
+만약 두 번째 구독자에게 이전에 전달되었던 이벤트도 함께 전달하고 싶다면 어떻게 해야할까?
+
+우선 PublishSubject는 별도의 버퍼를 가지고 있지 않아서 그것이 불가능하다.
+
+이럴 때는 `subject`의 타입을 PublishSubject에서 ReplaySubject로 바꾸면 된다. (`#1`)
+
+
+
+그러면 아래와 같이 된다.
+
+```swift
+let bag = DisposeBag()
+let subject = ReplaySubject<Int>.create(bufferSize: 5)
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).take(5).multicast(subject)
+
+source
+   .subscribe { print("🔵", $0) }
+   .disposed(by: bag)
+
+source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+   .disposed(by: bag)
+
+source.connect()
+
+/*출력값
+🔵 next(0)
+🔵 next(1)
+🔴 next(0)
+🔴 next(1)
+🔵 next(2)
+🔴 next(2)
+🔵 next(3)
+🔴 next(3)
+🔵 next(4)
+🔴 next(4)
+🔵 completed
+🔴 completed
+*/
+```
+
+ReplaySubject의 버퍼 사이즈는 5로 지정해주었다. 
+
+출력 결과를 보면, 두 번째 구독자가 구독을 시작하고 처음 전달된 next event의 element인 `2`와 함께  이전에 방출되었던 next event들까지 한꺼번에 전달되는 것을 볼 수 있다. 
+
+![화면 기록 2020-06-12 오전 9.43.51.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp7rj1bf9g30a808ygmu.gif)
+
+(한번에 전달 받는 걸 볼 수 있다.)
+
+최대 5개의 이벤트를 buffer에 저장하고 있기 때문이다. 그래서 이 이후에 새롭게 추가되는 구독자가 있다면, 구독 시점에 최대 5개까지의 이벤트를 전달 받는다. 
+
+
+
+이제 replay 연산자를 활용하여 코드를 더 단순화시켜보자.
+
+![스크린샷 2020-06-12 오전 9.48.12](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp7uiu826j30m80be41n.jpg)
+
+`replay` 연산자는 `publish` 연산자와 마찬가지로 내부에서 `multicast` 연산자를 호출하는데, 이때 `ReplaySubject`를 만들어서 `multicast` 연산자의 파라미터로 전달한다. 
+
+결국 `multicast` 연산자의 파라미터로 `PublishSubject`를 전달한다면 `publish` 연산자를 사용하고, `ReplaySubject`를 전달한다면 `replay` 연산자를 사용하면 된다. 
+
+두 연산자 모두 `multicast` 연산자를 더 쉽게 사용할 수 있게 도와주는 utility 연산자들이다. 
+
+`replay` 연산자를 사용할 때에는 보통 파라미터를 통해 버퍼의 크기를 지정하지만, 버퍼 크기의 제한이 없는 `replayAll` 연산자도 있다. 하지만 구현에 따라서 메모리 사용량이 급격하게 증가하는 문제가 있기 때문에 특별한 이유가 없다면 사용하지 않아야한다. 
+
+
+
+```swift
+let bag = DisposeBag()
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).take(5).replay(5)
+
+source
+   .subscribe { print("🔵", $0) }
+   .disposed(by: bag)
+
+source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+   .disposed(by: bag)
+
+source.connect()
+
+/*출력값
+🔵 next(0)
+🔵 next(1)
+🔴 next(0)
+🔴 next(1)
+🔵 next(2)
+🔴 next(2)
+🔵 next(3)
+🔴 next(3)
+🔵 next(4)
+🔴 next(4)
+🔵 completed
+🔴 completed
+*/
+```
+
+이전 코드에서 `subject`를 제거하고, multicast 연산자 대신 replay 연산자를 사용했다. 파라미터로는 버퍼 사이즈를 전달하면 된다. 실행 결과는 이전과 완전히 동일하다.
+
+replay 연산자를 사용할 때는 항상 버퍼 크기를 신중하게 지정해야한다. 필요 이상으로 크게 지정하게 되면 필연적으로 메모리 문제가 발생하기 때문에, 필요한 선에서 가장 작은 크기로 지정해야 한다. 그리고 버퍼 크기에 제한이 없는 replayAll 연산자는 가능하다면 사용하지 않아야 한다.
+
+그리고 multicast, publish 연산자와 마찬가지로 connect 메소드를 꼭 호출해주어야한다.
+
+---
+
+### refCount 
+
+
+
+이전까지의 Sharing Operator(multicast, publish, replay)들은 아래와 같이 모두 `ObservableType` Protocol의 extension으로 구현되어있다. 
+
+ ![스크린샷 2020-06-12 오전 10.05.03](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp8c3h9cxj30cb0emmzg.jpg)
+
+
+
+하지만 refCount 연산자는 `ConnectableObservableType`의 extension으로 구현되어 있다.
+
+![스크린샷 2020-06-12 오전 10.03.07](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp8a1ymsoj30m8097mzd.jpg)
+
+다시 말해서 일반 Observable에서는 사용할 수 없고, `ConnectableObservable`에서만 사용할 수 있다. 
+
+구현을 보면 파라미터는 없고, Observable을 리턴한다. 그리고 그 내부에 있는 `RefCount(source: self)`의 RefCount는 `ConnectableObservable`을 통해 생성하는 특별한 Observable이다. 앞으로 이것을 `RefCountObservable`이라고 지칭한다.
+
+
+
+`RefCountObservable`은 내부에 `ConnectableObservable`을 유지하면서, 새로운 구독자가 추가되는 시점에 자동으로 `connect` Method를 호출한다. 
+
+이후 구독자가 구독을 중지하고 더 이상 다른 구독자가 없다면 `ConnectableObservable`의 시퀀스를 중지한다. 
+
+그러다가 새로운 구독자가 추가되면 다시 connect 메소드를 호출한다. 이때 `ConnectableObservable`에서는 새로운 시퀀스가 시작된다.
+
+
+
+```swift
+let bag = DisposeBag()
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).debug().publish() // #1
+
+let observer1 = source
+.refCount()
+  .subscribe { print("🔵", $0) } // #2
+
+source.connect()
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+   observer1.dispose() // #3
+}
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 7) { // #4
+   let observer2 = source.subscribe { print("🔴", $0) } // #5
+
+   DispatchQueue.main.asyncAfter(deadline: .now() + 3) { // #6
+      observer2.dispose() // #7
+   }
+}
+/*출력값
+2020-06-12 10:24:03.508: refCount.playground:31 (__lldb_expr_47) -> subscribed
+2020-06-12 10:24:04.510: refCount.playground:31 (__lldb_expr_47) -> Event next(0)
+🔵 next(0)
+2020-06-12 10:24:05.510: refCount.playground:31 (__lldb_expr_47) -> Event next(1)
+🔵 next(1)
+2020-06-12 10:24:06.510: refCount.playground:31 (__lldb_expr_47) -> Event next(2)
+🔵 next(2)
+2020-06-12 10:24:07.510: refCount.playground:31 (__lldb_expr_47) -> Event next(3)
+2020-06-12 10:24:08.510: refCount.playground:31 (__lldb_expr_47) -> Event next(4)
+2020-06-12 10:24:09.510: refCount.playground:31 (__lldb_expr_47) -> Event next(5)
+2020-06-12 10:24:10.509: refCount.playground:31 (__lldb_expr_47) -> Event next(6)
+2020-06-12 10:24:11.510: refCount.playground:31 (__lldb_expr_47) -> Event next(7)
+🔴 next(7)
+2020-06-12 10:24:12.510: refCount.playground:31 (__lldb_expr_47) -> Event next(8)
+🔴 next(8)
+2020-06-12 10:24:13.510: refCount.playground:31 (__lldb_expr_47) -> Event next(9)
+🔴 next(9)
+2020-06-12 10:24:14.510: refCount.playground:31 (__lldb_expr_47) -> Event next(10)
+2020-06-12 10:24:15.510: refCount.playground:31 (__lldb_expr_47) -> Event next(11)
+2020-06-12 10:24:16.510: refCount.playground:31 (__lldb_expr_47) -> Event next(12)
+2020-06-12 10:24:17.510: refCount.playground:31 (__lldb_expr_47) -> Event next(13)
+2020-06-12 10:24:18.511: refCount.playground:31 (__lldb_expr_47) -> Event next(14)
+2020-06-12 10:24:19.509: refCount.playground:31 (__lldb_expr_47) -> Event next(15)
+2020-06-12 10:24:20.510: refCount.playground:31 (__lldb_expr_47) -> Event next(16)
+...
+(이하 생략)
+*/
+```
+
+
+
+예제를 보면, `#1`에는 1초마다 정수를 방출하는 Observable이 생성되어 있다. 자주 사용한 코드지만 이번에는 take 연산자를 사용하지 않고 있다. 그래서 코드를 실행하면 계속해서 정수를 방출한다. event 발생 시점을 자세히 확인할 수 있도록 debug 연산자가 추가되어 있고, publish 연산자로 Observable을 공유하고 있다. 
+
+그리고 `#2`에서 첫 번째 구독자를 추가한다. 첫 번째 구독자는 3초 뒤에 `#3`을 통해 구독이 중지된다. 
+
+두 번째 구독자는 `#4`에서 설정한대로 7초 뒤에 `#5`를 통해 구독을 시작하고, `#6`의 설정대로 구독 시작 후 3초 뒤에 `#7`로 인해 구독이 중지된다. 
+
+![화면 기록 2020-06-12 오전 10.23.48.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp8x33v3jg30dw05pe81.gif)
+
+실행 결과를 보면 구독이 시작되었다가 3초 뒤에 첫 번째 구독이 중지된다. 그리고 7초 뒤에 두 번째 구독이 시작되고, 다시 3초 뒤에 두 번째 구독이 중지된다. 하지만 `ConnectableObservable`은 계속해서 정수를 방출하고 있다. `ConnectableObservable`을 중지하고 싶다면 connect 메소드가 리턴하는 Disposable을 저장해두었다가, 원하는 시점에 dispose() 메소드를 호출해야한다. 
+
+로그를 자세히 보면, 두 번째 구독자가 처음으로 받은 next event에는 7이 저장되어있다. 하나의 구독을 공유하기 때문에 당연한 결과이다. 
+
+
+
+이제 refCount 연산자를 사용하는 코드로 바꾸고 결과를 비교해보자.
+
+```swift
+let bag = DisposeBag()
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).debug().publish().refCount() // #1
+
+let observer1 = source
+  .subscribe { print("🔵", $0) }
+
+// #2
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+   observer1.dispose() // #3
+}
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+   let observer2 = source.subscribe { print("🔴", $0) } // #4
+
+   DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+      observer2.dispose() // #5
+   }
+}
+
+/*출력값
+2020-06-12 10:32:50.640: refCount.playground:31 (__lldb_expr_51) -> subscribed
+2020-06-12 10:32:51.643: refCount.playground:31 (__lldb_expr_51) -> Event next(0)
+🔵 next(0)
+2020-06-12 10:32:52.642: refCount.playground:31 (__lldb_expr_51) -> Event next(1)
+🔵 next(1)
+2020-06-12 10:32:53.642: refCount.playground:31 (__lldb_expr_51) -> Event next(2)
+🔵 next(2)
+2020-06-12 10:32:53.936: refCount.playground:31 (__lldb_expr_51) -> isDisposed
+2020-06-12 10:32:58.342: refCount.playground:31 (__lldb_expr_51) -> subscribed
+2020-06-12 10:32:59.343: refCount.playground:31 (__lldb_expr_51) -> Event next(0)
+🔴 next(0)
+2020-06-12 10:33:00.343: refCount.playground:31 (__lldb_expr_51) -> Event next(1)
+🔴 next(1)
+2020-06-12 10:33:01.342: refCount.playground:31 (__lldb_expr_51) -> Event next(2)
+🔴 next(2)
+2020-06-12 10:33:01.635: refCount.playground:31 (__lldb_expr_51) -> isDisposed
+*/
+```
+
+
+
+`#1`의 publish 연산자 뒤에 refCount 연산자를 추가한다. 그러면 publish 연산자가 리턴하는 `ConnectableObservable`이 `RefCountObservable`로 변경된다. `RefCountObservable`은 내부에서 connect 메소드를 자동으로 호출하기 때문에, `#2`에 있던 `source.connect()`구문은 더 이상 필요 없어졌으므로 지워주었다. 
+
+![화면 기록 2020-06-12 오전 10.32.37.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp96yk8wzg30dw05pqmi.gif)
+
+실행 결과가 완전히 달라졌다. 
+
+첫 번째 구독자가 추가되면 `RefCountObservable`이 connect 메소드를 호출한다. 그러면 `ConnectableObservable`은 subject를 통해서 모든 구독자에게 이벤트를 전달한다. 
+
+`#3`에서 첫 번째 구독자가 구독을 중지한다. 이 시점에 다른 구독자는 없기 때문에 `ConnectableObservable` 역시 중지된다. 그래서 isDisposed 로그가 출력된다.
+
+RxSwift Docs에서는 이러한 동작을 Disconnect라고 표현한다. 
+
+첫 번째 구독자가 추가되면 connect 되고, 더 이상 구독자가 없다면 disconnect 된다. 
+
+
+
+이어 `#4`코드를 통해 7초 뒤에 새롭게 두 번째 구독자가 구독을 시작한다. 그러면 connect 된다. 이 때는 `ConnectableObservable`에서 새로운 시퀀스가 시작된다. 그래서 구독자가 처음으로 받는 next event에는 7이 아니라 0이 저장되어 있는 것이다. 
+
+`#5`코드로 인해 구독 시작 3초 뒤에 구독이 중지되면, 이전처럼 `ConnectableObservable`이 중지된다. 그래서 다시 isDisposed 로그가 출력된다. 
+
+
+
+multicast, publish, replay 연산자를 사용할 때에는 connect 메소드를 직접 호출해야 하고, 필요한 시점에 dispose 메소드나 take 연산자를 활용해서 리소스가 정리되도록 구현해야한다. 
+
+하지만 refCount 연산자를 활용하면 이런 부분이 자동으로 처리되기 때문에 코드를 단순하게 구현할 수 있다. 
+
+
+
+---
+
+### share 
+
+
+
+![스크린샷 2020-06-12 오전 10.48.08](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp9l0fbf8j30mn10447o.jpg)
+
+share 연산자 구현 코드이다. 이전에 다뤘던 다양한 Sharing Operator들을 활용하고 있기 때문에 복잡하게 보인다. 
+
+
+
+먼저 share 연산자는 두 개의 파라미터를 받는다.
+
+첫 번째 파라미터는 replay buffer의 크기이다. 파라미터로 0을 전달하면, 
+
+![스크린샷 2020-06-12 오전 10.50.58](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp9nwf5pvj30e601haar.jpg)
+
+케이스로 선언되어있듯 multicast를 호출할 때 PublishSubject를 전달한다. 
+
+만약 0보다 큰 값을 전달한다면 
+
+![스크린샷 2020-06-12 오전 10.52.29](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp9pf98rvj30f70253zi.jpg)
+
+이렇게 multicast를 호출할 때 ReplaySubject를 전달한다. 
+
+기본값이 0으로 선언되어 있기 때문에, 다른 값을 전달하지 않는다면 새로운 구독자는 구독 이후에 방출된 event만 전달 받는다. 
+
+내부적으로 multicast 연산자를 호출하여 사용하기 때문에 multicast 연산자와 마찬가지로 하나의 Subject를 통해 시퀀스를 공유한다. 두 번째 파라미터는 바로 이 Subject의 수명을 결정한다. 
+
+연산자의 리턴형은 Observable로 선언되어 있다. 
+
+share 연산자는 내부적으로 먼저 multicast 연산자를 호출하고 이어서 refCount 연산자를 호출한다. share 연산자가 리턴하는 Observable은 이전에 다룬 `RefCountObservable`이다.
+
+> `RefCountObservable은` 내부에 `ConnectableObservable`을 유지하면서, 새로운 구독자가 추가되는 시점에 자동으로 connect() Method를 호출한다. 
+>
+> 이후 구독자가 구독을 중지하고 더 이상 다른 구독자가 없다면 `ConnectableObservable`의 시퀀스를 중지한다. 
+>
+> 그러다가 새로운 구독자가 추가되면 다시 connect 메소드를 호출한다. 이때 `ConnectableObservable`에서는 새로운 시퀀스가 시작된다.
+
+그래서 새로운 구독자가 추가되면 자동으로 connect 되고, 구독자가 더 이상 없다면 disconnect 된다. 
+
+
+
+두 번째 파라미터는 기본 값이 `.whileConnected`로 선언되어 있다. 
+
+![스크린샷 2020-06-12 오전 10.58.54](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfp9w4jse0j30gp011dge.jpg)
+
+이 경우 새로운 구독자가 추가되면(즉 새로운 connection이 시작되면) 새로운 subject가 생성된다. 그리고 connection이 종료되면 그 subject는 사라진다. connection마다 새로운 subject가 생성되기 때문에, 각 connection들은 다른 connection들과 격리된다. 
+
+
+
+반대로 두 번째 파라미터로 `.forever`를 전달하면 모든 connection이 하나의 subject를 공유한다. 
+
+```swift
+let bag = DisposeBag()
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).debug().share() // #1
+
+let observer1 = source
+   .subscribe { print("🔵", $0) }
+
+let observer2 = source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 5) {// #2
+   observer1.dispose() 
+   observer2.dispose()
+}
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+   let observer3 = source.subscribe { print("⚫️", $0) } // #3
+
+   DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+      observer3.dispose()
+   }
+}
+
+/*출력값
+2020-06-12 11:21:07.026: share.playground:31 (__lldb_expr_55) -> subscribed
+2020-06-12 11:21:08.042: share.playground:31 (__lldb_expr_55) -> Event next(0)
+🔵 next(0)
+2020-06-12 11:21:09.042: share.playground:31 (__lldb_expr_55) -> Event next(1)
+🔵 next(1)
+2020-06-12 11:21:10.042: share.playground:31 (__lldb_expr_55) -> Event next(2)
+🔵 next(2)
+2020-06-12 11:21:11.042: share.playground:31 (__lldb_expr_55) -> Event next(3)
+🔵 next(3)
+🔴 next(3)
+2020-06-12 11:21:12.042: share.playground:31 (__lldb_expr_55) -> Event next(4)
+🔵 next(4)
+🔴 next(4)
+2020-06-12 11:21:12.544: share.playground:31 (__lldb_expr_55) -> isDisposed
+2020-06-12 11:21:14.743: share.playground:31 (__lldb_expr_55) -> subscribed
+2020-06-12 11:21:15.744: share.playground:31 (__lldb_expr_55) -> Event next(0)
+⚫️ next(0)
+2020-06-12 11:21:16.743: share.playground:31 (__lldb_expr_55) -> Event next(1)
+⚫️ next(1)
+2020-06-12 11:21:17.744: share.playground:31 (__lldb_expr_55) -> Event next(2)
+⚫️ next(2)
+2020-06-12 11:21:17.745: share.playground:31 (__lldb_expr_55) -> isDisposed
+*/
+```
+
+
+
+1초마다 정수를 방출하는 source Observable이 있고, `#1`에서 share 연산자를 호출한다. 
+
+즉시 source Observable을 구독하는 `observer1`과, 3초의 지연 후에 구독을 시작하는 `observer2`가 있다.
+
+코드 실행 5초 뒤에 두 구독자 모두 dispose 된다.
+
+코드 실행 7초 후에 `observer3`가 source Observable에 새로운 구독자를 추가한다. 그로부터 3초 후에 `observer3`가 dispose 된다. 
+
+ `source`의 형식을 확인해보면 Observable로 나온다.
+
+![스크린샷 2020-06-12 오전 11.18.19](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfpagpo9p5j30e303nac3.jpg)
+
+하지만 share 연산자가 리턴하는 Observable은 단순한 Observable이 아니라 `RefCountObservable`라는 걸 꼭 기억해야한다. 
+
+
+
+코드를 실행하면 아래와 같이 출력된다.
+
+![화면 기록 2020-06-12 오전 11.20.40.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfpal3cb89g30dw05qnig.gif)
+
+첫 번재 파라미터는 replay buffer 파라미터이고 기본값이 0이다. 그래서 3초 뒤에 구독을 시작한 두 번째 구독자 `observer2`는 이전에 source` Observable로부터 방출되었던 3개의 next event를 받지 못한다. 
+
+그리고 5초 후에 `#2`에서 `observer1`, `observer2`의 구독이 종료되면, 내부에 있는 `ConnectableObservable` 역시 중지된다. 그래서 isDisposed 로그가 발생한다. 이것은 share 연산자 내부에서 refCount 연산자를 호출하기 때문이다. 
+
+이어 7초 뒤에 새로운 구독자 `observer3`가 추가되면 `ConnectableObservable`에서 새로운 시퀀스가 시작된다. 그래서 세 번째 구독자 `observer3`가 처음 받는 이벤트에는 0이 포함되어 있다. 
+
+![스크린샷 2020-06-12 오전 11.28.16](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfpaqndq3wj302v00ojrb.jpg)
+
+이제 share 연산자의 두 번째 파라미터에 대해 생각해보자. `ConnectableObservable` 내부에 있는 Subject의 수명을 결정하는데, 기본값이 `.whileConnected`이다. 이 경우 새로운 구독자가 추가되면 Subject를 생성하고, 이후에 추가되는 구독자들은 이 Subject를 구독한다. 
+
+그래서 첫 번째 구독자와 두 번째 구독자는 동일한 Subject로부터 이벤트를 전달 받는다(`observer1`이 추가된 시점에 생성된 Subject). 
+
+이것이 두 번째 구독자가 처음으로 받은 next event에 0이 아니라 3이 저장되어있는 이유이다.
+
+이어 `#2`에서 두 구독자 모두 종료된 시점에 `2020-06-12 11:21:12.544: share.playground:31 (__lldb_expr_55) -> isDisposed` 로그가 출력되는데, 이때 Subject가 사라진다. 
+
+그 이후 새로운 구독자 `observer3`가 추가되는 시점`#3`에   `2020-06-12 11:21:14.743: share.playground:31 (__lldb_expr_55) -> subscribed`가 출력되고, 
+
+이때 새로운 Subject가 생성된다. 그래서 세 번째 구독자가 처음으로 받는 next event에는 0이 저장되어 있다. 
+
+앞에서 다룬 Sharing Operator들인 multicast, publish, replay, refCount 들이 모두 사용되어있는 연산자가 share 연산자이다.
+
+
+
+이번에는 `#1`의 share 연산자에 replay 파라미터로 5를 전달해보자.
+
+```swift
+let bag = DisposeBag()
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).debug().share(replay: 5) // #1
+
+let observer1 = source
+   .subscribe { print("🔵", $0) }
+
+let observer2 = source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+   observer1.dispose()
+   observer2.dispose()
+}
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+   let observer3 = source.subscribe { print("⚫️", $0) }
+
+   DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+      observer3.dispose()
+   }
+}
+
+/*출력값
+2020-06-12 11:40:17.845: share.playground:31 (__lldb_expr_57) -> subscribed
+2020-06-12 11:40:18.848: share.playground:31 (__lldb_expr_57) -> Event next(0)
+🔵 next(0)
+2020-06-12 11:40:19.847: share.playground:31 (__lldb_expr_57) -> Event next(1)
+🔵 next(1)
+2020-06-12 11:40:20.847: share.playground:31 (__lldb_expr_57) -> Event next(2)
+🔵 next(2)
+🔴 next(0)
+🔴 next(1)
+🔴 next(2)
+2020-06-12 11:40:21.847: share.playground:31 (__lldb_expr_57) -> Event next(3)
+🔵 next(3)
+🔴 next(3)
+2020-06-12 11:40:22.847: share.playground:31 (__lldb_expr_57) -> Event next(4)
+🔵 next(4)
+🔴 next(4)
+2020-06-12 11:40:23.349: share.playground:31 (__lldb_expr_57) -> isDisposed
+2020-06-12 11:40:25.549: share.playground:31 (__lldb_expr_57) -> subscribed
+2020-06-12 11:40:26.550: share.playground:31 (__lldb_expr_57) -> Event next(0)
+⚫️ next(0)
+2020-06-12 11:40:27.550: share.playground:31 (__lldb_expr_57) -> Event next(1)
+⚫️ next(1)
+2020-06-12 11:40:28.549: share.playground:31 (__lldb_expr_57) -> Event next(2)
+⚫️ next(2)
+2020-06-12 11:40:28.849: share.playground:31 (__lldb_expr_57) -> isDisposed
+*/
+```
+
+
+
+이제 실행 결과를 gif로 확인해보며 시점을 생각해보자.
+
+![화면 기록 2020-06-12 오전 11.40.17.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfpb50810xg30dw05q1kx.gif)
+
+이제 새로운 구독자는 구독이 시작되는 시점에 버퍼에 저장되어있는 최대 5개의 최근 값을 한꺼번에 전달 받는다. 그래서 두 번째 구독자 `observer2`는 이전에 전달되었던 next event도 함께 전달 받는다. 
+
+하지만 세 번째 구독자 `observer3`는 새로운 Subject로부터 이벤트를 전달 받기 때문에, 구독 시점에 하나의 next event만 받는다. 
+
+
+
+마지막으로 `#1`share 연산자에 두 번째 파라미터인 scope로 `.forever`를 전달해보자. 
+
+```swift
+let bag = DisposeBag()
+let source = Observable<Int>.interval(.seconds(1), scheduler: MainScheduler.instance).debug().share(replay: 5, scope: .forever)
+
+let observer1 = source
+   .subscribe { print("🔵", $0) }
+
+let observer2 = source
+   .delaySubscription(.seconds(3), scheduler: MainScheduler.instance)
+   .subscribe { print("🔴", $0) }
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+   observer1.dispose()
+   observer2.dispose()
+}
+
+DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+   let observer3 = source.subscribe { print("⚫️", $0) }
+
+   DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+      observer3.dispose()
+   }
+}
+
+/*출력값
+2020-06-12 11:46:25.277: share.playground:31 (__lldb_expr_59) -> subscribed
+2020-06-12 11:46:26.292: share.playground:31 (__lldb_expr_59) -> Event next(0)
+🔵 next(0)
+2020-06-12 11:46:27.291: share.playground:31 (__lldb_expr_59) -> Event next(1)
+🔵 next(1)
+2020-06-12 11:46:28.291: share.playground:31 (__lldb_expr_59) -> Event next(2)
+🔵 next(2)
+🔴 next(0)
+🔴 next(1)
+🔴 next(2)
+2020-06-12 11:46:29.291: share.playground:31 (__lldb_expr_59) -> Event next(3)
+🔵 next(3)
+🔴 next(3)
+2020-06-12 11:46:30.292: share.playground:31 (__lldb_expr_59) -> Event next(4)
+🔵 next(4)
+🔴 next(4)
+2020-06-12 11:46:30.790: share.playground:31 (__lldb_expr_59) -> isDisposed
+⚫️ next(0)
+⚫️ next(1)
+⚫️ next(2)
+⚫️ next(3)
+⚫️ next(4)
+2020-06-12 11:46:32.994: share.playground:31 (__lldb_expr_59) -> subscribed
+2020-06-12 11:46:33.995: share.playground:31 (__lldb_expr_59) -> Event next(0)
+⚫️ next(0)
+2020-06-12 11:46:34.995: share.playground:31 (__lldb_expr_59) -> Event next(1)
+⚫️ next(1)
+2020-06-12 11:46:35.995: share.playground:31 (__lldb_expr_59) -> Event next(2)
+⚫️ next(2)
+2020-06-12 11:46:35.996: share.playground:31 (__lldb_expr_59) -> isDisposed
+*/
+```
+
+share 연산자의 scope 파라미터로 `.forever`를 전달하면 모든 구독자가 하나의 Subject 공유한다. 
+
+![화면 기록 2020-06-12 오전 11.46.12.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfpbanriimg30dw05q4o2.gif)
+
+이번에는 세 번째 구독자 `observer3`가 추가되는 시점에 replay buffer에 저장되어있는 5개의 이벤트가 함께 전달된다. 
+
+하지만 buffer에 저장되어있던 값 5개를 받은 직후 `observer3`가 새롭게 전달 받은 next event에는 5가 아니라 0이 저장되어 있다.
+
+![스크린샷 2020-06-12 오전 11.49.33](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfpbct6updj303305et9b.jpg)
+
+share 연산자가 내부에서 refCount 연산자를 사용하고 `RefCountObservable`을 리턴하기 때문에 그렇다. share 연산자가 리턴하는 `RefCountObservable`의 특징을 생각해보면 당연하다. 
+
+**두 번째 파라미터로 `.forever`를 전달함으로써 모든 구독자가 하나의 Subject로부터 전달되는 이벤트를 공유하게 됐다고 하더라도, 중간에 시퀀스가 중지된 다음에 새로운 구독자가 추가되면 언제나 새로운 시퀀스가 시작된다. 한 번 중지된 시퀀스가 '이어서' 공유되는 것이 아니다.**
+
+scope를 `.forever`로 지정하면, 하나의 subject를 공유할 뿐이다. share 연산자가 리턴하는 `RefCountObservable`의 특징에는 아무런 영향을 끼치지 못한다. 
+
+***어떤 시퀀스를 공유하는 모든 구독자가 dispose되면 해당 시퀀스 역시 종료된다. 그리고 새로운 구독자가 추가되면 -> 새로운 시퀀스가 생성된다.
+
+
+
+---
 
