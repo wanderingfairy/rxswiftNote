@@ -79,8 +79,14 @@
   - [replay](#replay)
   - [refCount](#refcount)
   - [share](#share)
-
-
+- [17.Scheduler](#17scheduler)
+  - [Scheduler의 사용](#scheduler%EC%9D%98-%EC%82%AC%EC%9A%A9)
+- [17. Error Handling](#17-error-handling)
+  - [catchError](#catcherror)
+  - [catchErrorJustReturn](#catcherrorjustreturn)
+  - [retry, retryWhen](#retry-retrywhen)
+    - [retry](#retry)
+    - [retryWhen](#retrywhen)
 
 ---
 
@@ -5194,4 +5200,756 @@ scope를 `.forever`로 지정하면, 하나의 subject를 공유할 뿐이다. s
 
 
 ---
+
+## 17.Scheduler
+
+
+
+ iOS 앱을 만들다가 Multi Threading 처리가 필요하면 GCD(Grand Central Dispatch)를 사용하지만, RxSwift에서는 Scheduler를 사용한다. 
+
+![스크린샷 2020-06-13 오후 7.24.53](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqu63peywj30nz0gijt1.jpg)
+
+스케쥴러는 특정 코드가 실행되는 Context를 추상화한 것이다. Context는 Low level thread가 될 수도 있고, Dispatch Queue나 Operation Queue가 될 수도 있다. 
+
+스케쥴러는 추상화된 Context이기 때문에 쓰레드와 1:1로 매칭되지 않는다. 하나의 쓰레드에 두 개 이상의 개별 스케쥴러가 존재하거나, 하나의 스케쥴러가 두 개의 쓰레드에 걸쳐있는 경우도 있다. 
+
+하지만 역시 큰 틀에서 보면 GCD와 유사하며, 몇 가지 규칙 하에서 스케쥴러를 사용하면 된다. 
+
+
+
+예를 들어 UI update와 관련된 코드는 Main 쓰레드에서 실행해야하는데, 
+
+이를 GCD에서는 Main Queue에서 실행하고, RxSwift에서는 Main Scheduler에서 실행한다. 
+
+그리고 Network request나 파일 처리 같은 작업을 메인 쓰레드에서 실행하면 Blocking이 발생한다. 그래서 GCD에서는 이러한 작업을 Global Queue에서 실행하는데, RxSwift에서는 Background Scheduler에서 실행한다. 
+
+
+
+![스크린샷 2020-06-13 오후 7.32.53](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqud9otgcj30v20ch75v.jpg)
+
+RxSwift는 GCD와 마찬가지로 다양한 기본 스케쥴러를 제공한다. 내부적으로 GCD와 유사한 방식으로 동작하고, 실행할 작업을 스케쥴링한다. 
+
+스케쥴링 방식에 따라 Serial Scheduler와 Concurrent Scheduler로 구분한다.
+
+- 가장 기본적인 스케쥴러는 Serial Scheduler에 속하는 `CurrentThreadScheduler`이다. 별도로 스케쥴러를 별도로 지정하지 않는다면, 이 스케쥴러가 사용된다.
+
+- Main Thread와 연관된 스케쥴러는 Serial Scheduler의 `MainScheduler`이다. 메인 큐처럼 UI를 업데이트 할 때 사용한다. 
+
+- 작업을 실행할 Dispatch Queue를 직접 지정하고 싶다면, Serial Scheduler의 `SerialDispatchQueueScheduler`와 Concurrent Scheduler의 `ConcurrentDispatchQueueScheduler`를 사용한다. 
+
+- Background 작업을 실행할 때는 Serial Scheduler의 `SerialDispatchQueueScheduler`와 Concurrent Schedulerd의`ConcurrentDispatchQueueScheduler`를 사용한다. 
+
+- 실행 순서를 지정하거나 동시에 실행 가능한 작업 수를 제한하고 싶다면 OperationQueueScheduler를 사용한다. 이 스케쥴러는 DispatchQueue가 아닌 OperationQueue를 사용해서 생성한다.
+
+- 이 밖에도 Unit test에 사용되는 `Test Scheduler`가 제공된다.
+-  스케쥴러를 직접 구현하는 것도 가능하다.
+
+
+
+#### Scheduler의 사용
+
+스케쥴러를 잘 사용하기 위해서 두 가지가 선행되어야한다. 
+
+1. 먼저 Observable이 생성되는 시점을 이해해야한다. 
+
+```swift
+let bag = DisposeBag()
+
+Observable.of(1, 2, 3, 4, 5, 6, 7, 8, 9)
+   .filter { num -> Bool in
+      print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> filter")
+      return num.isMultiple(of: 2)
+   }
+   .map { num -> Int in
+      print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> map")
+      return num * 2
+   }
+
+//실행 결과 없음
+```
+
+ 코드를 보면 1에서 9까지 방출하는 Observable이 선언되어있다. 그리고 filter 연산자로 짝수를 필터링하고, map 연산자로 개별 결과에 2를 곱한다. 또 연산자가 어느 쓰레드에서 실행되는지 확인하는 로그도 추가되어있다. 하지만 이대로 실행할 경우 로그도, 아무것도 출력되지 않는다. 
+
+즉 Observable이 생성되는 것도 아니고, 연산자가 호출된 것도 아니다. 여기에 있는 코드는 Observable이 어떤 요소를 방출하고, 어떻게 처리해야하는지 나타낼 뿐이다. 
+
+**실제 Observable이 생성되고, 연산자가 호출되는 시점은 바로 구독이 시작되는 시점이다.**
+
+
+
+```swift
+let bag = DisposeBag()
+
+Observable.of(1, 2, 3, 4, 5, 6, 7, 8, 9)
+  .filter { num -> Bool in
+    print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> filter")
+    return num.isMultiple(of: 2)
+}
+.map { num -> Int in
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> map")
+  return num * 2
+}
+.subscribe { // #1
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> subscribe")
+  print($0)
+}
+  .disposed(by: bag)
+
+/*실행 결과
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> map
+Main Thread >> subscribe
+next(4)
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> map
+Main Thread >> subscribe
+next(8)
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> map
+Main Thread >> subscribe
+next(12)
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> map
+Main Thread >> subscribe
+next(16)
+Main Thread >> filter
+Main Thread >> subscribe
+completed
+
+*/
+```
+
+`#1`처럼 구독자가 추가되는 시점에 Observable이 생성되고, 연산자를 거쳐서 최종 결과가 구독자에게 전달된다.
+
+
+
+2. 두 번째는 스케쥴러를 지정하는 방법
+
+위 코드에는 따로 스케쥴러를 지정하지 않았는데, 이 경우에는 기본 스케쥴러인 `CurrentThreadScheduler`가 사용된다.
+
+플레이그라운드가 실행되는 쓰레드는 Main Thread이고, 여기에서 작성한 모든 코드는 Main Thread에서 실행된다. 그래서 결과를 보면 모두 Main Thread라고 출력되어있다. 
+
+map 연산자를 Main Thread가 아니라 Background Thread에서 실행하고 싶다면?
+
+RxSwift에서 스케쥴러를 지정할 때에는 observeOn 메소드와 subscribeOn 메소드를 사용한다. 
+
+
+
+
+
+ObserveOn 메소드는 연산자를 실행할 스케쥴러를 지정한다. 
+
+코드 앞 부분에 backgroundScheduler를 하나 만들어보자.
+
+```swift
+let backgroundScheduler = ConcurrentDispatchQueueScheduler(queue: DispatchQueue.global()) // #1
+```
+
+이어서 observeOn 메소드를 이용하여 map 연산자를 실행할 스케쥴러로 `backgroundScheduler`를 지정해준다. ( 아래 코드의 `#2`)
+
+```swift
+let bag = DisposeBag()
+
+let backgroundScheduler = ConcurrentDispatchQueueScheduler(queue: DispatchQueue.global()) // #1
+
+Observable.of(1, 2, 3, 4, 5, 6, 7, 8, 9)
+  .filter { num -> Bool in
+    print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> filter")
+    return num.isMultiple(of: 2)
+}
+.observeOn(backgroundScheduler) // #2
+.map { num -> Int in
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> map")
+  return num * 2
+}
+.subscribe { // #3
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> filter")
+  print($0)
+}
+  .disposed(by: bag)
+
+/* 실행 결과
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> map
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> subscribe
+Main Thread >> filter
+next(4)
+Main Thread >> filter
+Background Thread >> map
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> subscribe
+next(8)
+Background Thread >> map
+Background Thread >> subscribe
+next(12)
+Background Thread >> map
+Background Thread >> subscribe
+next(16)
+Background Thread >> subscribe
+completed
+
+*/
+```
+
+결과를 보면 map 연산자가 Background Thread에서 실행되는 걸 볼 수 있다.
+
+ObserveOn 메소드는 이어지는 연산자들이 작업을 실행할 스케쥴러를 지정한다. 그래서 뒤에 있는 map은 background Scheduler에서 실행되지만, 앞에 있는 filter에는 영향을 주지 않는다.
+
+그리고 결과를 자세히 보면 subscribe 내에 작성된 코드도 background에서 실행되고 있다. ObserveOn 메소드로 지정한 스케쥴러는 다른 스케쥴러로 변경하기 전까지 계속 사용된다.
+
+
+
+subscribeOn 메소드는 구독을 시작하고 종료할 때 사용할 스케쥴러를 지정한다. 구독을 시작하면 Observable에서 새로운 이벤트가 방출되는데 이 이벤트를 방출할 Scheduler를 지정하는 것이다. 그리고 create 연산자로 구현한 코드 역시 subscribeOn 메소드로 지정한 스케쥴러에서 실행된다. 이 메소드를 사용하지 않는다면 subscribe 메소드가 호출된 스케쥴러에서 새로운 시퀀스가 시작된다.
+
+
+
+```swift
+let bag = DisposeBag()
+
+let backgroundScheduler = ConcurrentDispatchQueueScheduler(queue: DispatchQueue.global())
+
+Observable.of(1, 2, 3, 4, 5, 6, 7, 8, 9)
+  .filter { num -> Bool in
+    print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> filter")
+    return num.isMultiple(of: 2)
+}
+.observeOn(backgroundScheduler)
+.map { num -> Int in
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> map")
+  return num * 2
+}
+.subscribeOn(MainScheduler.instance)
+.subscribe {
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> subscribe")
+  print($0)
+}
+  .disposed(by: bag)
+/*실행 결과
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> map
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> subscribe
+next(4)
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> map
+Main Thread >> filter
+Background Thread >> subscribe
+next(8)
+Background Thread >> map
+Background Thread >> subscribe
+next(12)
+Background Thread >> map
+Background Thread >> subscribe
+next(16)
+Background Thread >> subscribe
+completed
+*/
+```
+
+`#3`에 subscribeOn 메소드를 추가했다. `MainScheduler`는 `instance`  속성으로 쉽게 얻을 수 있다.
+
+하지만 결과를 보면 **subscribe**에서 실행되는 코드는 여전히 background에서 실행되고 있다. 메소드 이름 때문에 혼동하게 되는데, 
+
+- **subscribeOn 메소드는 subscribe 메소드가 실행되는 스케쥴러를 지정하는 것이 아니다. **
+- **그리고 이어지는 연산자가 호출되는 스케쥴러를 지정하는 것도 아니다. **
+- **Observable이 시작되는 시점에 어떤 스케쥴러를 사용할지 지정하는 것이다.** 
+
+이 차이를 확실하게 구분해야 한다. 그리고 observeOn 메소드와 달리, 호출 시점이 중요하지 않다. 어차피 Observable은 subscribe 메소드가 실행되는 시점에 생성되기 때문에, subscribe 메소드 호출 시점보다 앞이기만 하면 어느 부분에서 호출하더라도 순서가 중요하지 않다.
+
+만약 subscribe 메소드를 MainScheduler에서 실행하고 싶다면 subscribe를 호출하기 전에 observeOn 메소드를 호출하고, 파라미터로 MainScheduler.instance를 전달한다.
+
+```swift
+let bag = DisposeBag()
+
+let backgroundScheduler = ConcurrentDispatchQueueScheduler(queue: DispatchQueue.global())
+
+Observable.of(1, 2, 3, 4, 5, 6, 7, 8, 9)
+  .filter { num -> Bool in
+    print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> filter")
+    return num.isMultiple(of: 2)
+}
+.observeOn(backgroundScheduler)
+.map { num -> Int in
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> map")
+  return num * 2
+}
+.subscribeOn(MainScheduler.instance)
+.observeOn(MainScheduler.instance) // #1
+.subscribe {
+  print(Thread.isMainThread ? "Main Thread" : "Background Thread", ">> subscribe")
+  print($0)
+}
+  .disposed(by: bag)
+
+/*실행 결과
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> map
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> filter
+Main Thread >> filter
+Background Thread >> map
+Main Thread >> filter
+Background Thread >> map
+Background Thread >> map
+Main Thread >> subscribe
+next(4)
+Main Thread >> subscribe
+next(8)
+Main Thread >> subscribe
+next(12)
+Main Thread >> subscribe
+next(16)
+Main Thread >> subscribe
+completed
+*/
+```
+
+`#1`에서 observeOn 메소드를 호출하자 이제 subscribe 메소드가 MainScheduler에서 실행된다.
+
+정리하자면
+
+- **subscribeOn 메소드는 Observable이 시작될 스케쥴러를 지정한다.** 
+
+- **observeOn메소드는 이어지는 연산자가 실행될 스케쥴러를 지정한다.**
+
+
+
+---
+
+## 17. Error Handling
+
+RxSwift에서는 에러를 처리하기 위한 여러 방법을 사용할 수 있다.
+
+Observable에서 전달한 에러 이벤트가 구독자에게 전달되면, 구독이 종료되고 더 이상 새로운 이벤트가 전달되지 않는다. 즉, 더 이상 새로운 이벤트를 처리할 수 없게 된다.
+
+예를 들어 Observable이 네트워크 요청을 처리하고, 구독자가 UI를 Update하는 패턴을 생각해보자.
+
+보통 UI를 업데이트 하는 코드는 next event가 전달되는 시점에 실행된다. 에러 이벤트가 전달되면 구독이 종료되고, 더 이상 next event가 전달되지 않는다. 그래서 UI를 업데이트하는 코드는 실행되지 않는다(ex. 에러가 발생했다는 내용으로의 UI 업데이트가 불가능해짐). 
+
+RxSwift는 두 가지 방법으로 이런 문제를 해결한다. 
+
+![스크린샷 2020-06-13 오후 9.15.13](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqxbtblq2j30qr0h30u8.jpg)
+
+첫 번째 방법은 error 이벤트가 전달되면 새로운 Observable을 리턴하는 것이다. 여기에서는 catchError 연산자를 사용한다. Observable이 전달하는 next event와 completed event는 그대로 구독자에게 전달된다. 반면 error event가 전달되면, 새로운 Observable을 구독자에게 전달한다. 
+
+다시 네트워크 요청을 생각해보면 기본 값이나 로컬 캐시를 방출하는 Observable을 구독자에게 전달할 수 있다. 그래서 에러가 발생한 경우에도 UI는 적절한 값으로 업데이트 된다.
+
+![스크린샷 2020-06-13 오후 9.19.11](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqxfyt37uj30s50kddha.jpg)
+
+두 번째 방법은 에러가 발생한 경우 Observable을 다시 구독하는 것이다. 이때는 retry 연산자를 사용한다. 에러가 발생하지 않을 때까지 무한정 재시도하거나, 재시도 횟수를 제한할 수 있다.
+
+
+
+---
+
+### catchError
+
+catchError 메소드는 next event와 completed event는 구독자에게 그대로 전달한다.
+
+하지만 에러 이벤트는 전달하지 않고, 새로운 Observable이나 기본 값을 전달한다.
+
+이 연산자는 다양한 상황에서 사용되지만, 특히 네트워크 요청을 구현할 때 많이 사용한다. 
+
+올바른 응답을 받지 못한 상황에서 로컬 캐시를 사용하거나 기본 값을 사용하도록 구현할 수 있다. 
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+   case error
+}
+
+let subject = PublishSubject<Int>()
+let recovery = PublishSubject<Int>()
+
+subject
+// #1
+   .subscribe { print($0) }
+   .disposed(by: bag)
+
+subject.onError(MyError.error)
+
+//실행 결과
+//error(error)
+```
+
+이렇게 PublishSubject인 `subject`에 구독자를 추가하고, 에러 이벤트를 전달하면 구독자에게 그대로 전달된다. 이어서 즉시 구독이 종료되기 때문에 더 이상 다른 이벤트는 구독자에게 전달되지 않는다.  
+
+이제 `#1`에 catchError 연산자를 추가해보도록 하자.
+
+![스크린샷 2020-06-13 오후 9.43.36](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqy57rt0ej30mr0bgn0e.jpg)
+
+catchError 연산자는 클로저를 파라미터로 받는다. 에러 이벤트는 클로저 파라미터로 전달되고, 클로저는 새로운 Observable을 리턴한다. 그리고 Observable이 방출하는 요소의 형식은 
+
+![스크린샷 2020-06-13 오후 9.45.11](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqy6ur2ldj304s00pwei.jpg)
+
+source Observable이 방출하는 요소의 형식과 동일하다. catchError 연산자는 source Observable가 에러 이벤트를 전달하면, source Observable을 catchError연산자의 클로저가 리턴하는 Observable로 교체한다. 원본 source Observable은 더 이상 다른 이벤트를 전달하지 못하지만, 교체된 새로운 source Observable은 문제가 없기 때문에 계속해서 다른 이벤트를 전달할 수 있다.
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+   case error
+}
+
+let subject = PublishSubject<Int>()
+let recovery = PublishSubject<Int>()
+
+subject
+  .catchError { _ in recovery } // #1
+   .subscribe { print($0) }
+   .disposed(by: bag)
+
+subject.onError(MyError.error)
+//출력값 없음
+```
+
+`#1`에서 catchError 연산자를 선언하고 `recovery` 를 파라미터로 전달했다. 
+
+그리고나서 코드를 실행해보면, 이번에는 구독자에게 에러 이벤트가 전달되지 않았음을 확인할 수 있다. 
+
+이는 원본 source Observable인 `subject`가 에러 이벤트를 방출하고 종료되자 catchError 연산자가 source Observable을 `subject` 대신 `recovery`로 교체했기 때문이다. 
+
+```swift
+...(전략)
+
+subject.onNext(11) // #1
+recovery.onNext(22) // #2
+recovery.onCompleted() // #3
+
+//출력값
+//next(22)
+//completed
+```
+
+그 이후에 `#1`처럼 `subject`에 next event를 전달해보면, 이미 에러 이벤트를 전달하고 종료된 Observable이기 때문에 더 이상 구독자에게 next event가 전달되지 않는다. 
+
+반면 `#2`에서 `recovery`로 전달한 next event는 구독자에게 전달되고 있다. 
+
+또 `#3`처럼 completed event를 전달하면 구독이 에러 없이 정상적으로 종료된다.
+
+catchError 연산자는 source Observable에서 발생한 에러를 새로운 Observable로 교체하는 방식으로 처리한다.
+
+
+
+---
+
+### catchErrorJustReturn
+
+
+
+catchErrorJustReturn 연산자는 에러 발생시 Observable이 아니라 기본값을 리턴한다. 
+
+![스크린샷 2020-06-13 오후 10.05.52](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqyshe2z9j30m30bnacu.jpg) 
+
+Source Observable에서 에러 이벤트가 발생하면 파라미터로 전달한 기본값을 구독자에게 전달한다. 그리고 파라미터의 타입은 항상 Source Observable이 방출하는 요소의 타입과 일치해야한다.
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+let subject = PublishSubject<Int>()
+
+subject
+  .catchErrorJustReturn(-1) // #1
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+subject.onError(MyError.error)
+
+/*출력값
+next(-1)
+completed
+*/
+```
+
+
+
+코드를 실행하면 subject로 에러 이벤트가 전달되고, `#1`에서 파라미터로 전달한 값이 구독자에게 전달된다. Source Observable은 더 이상 다른 이벤트를 전달할 수 없고, 파라미터로 전달한 것은 Observable이 아니라 그냥 하나의 값이기 때문에 더 이상은 전달될 이벤트가 없다. 그래서 바로 completed event를 전달하고 구독이 종료된다.
+
+- 에러가 발생했을 때 사용할 수 있는 기본값이 있다면 `catchErrorJustReturn` 연산자를 사용한다. 하지만 발생한 에러의 종류와 무관하게 항상 같은 값이 리턴된다는 단점이 있다. 
+- 나머지 경우에는 `catchError` 연산자를 사용한다. 클로저를 통해 에러 처리 코드를 자유롭게 작성할 수 있다는 장점이 있다. 
+- 두 연산자와 달리 작업을 처음부터 다시 시작하고 싶다면 `retry` 연산자를 사용해야한다.
+
+
+
+---
+
+### retry, retryWhen
+
+
+
+#### retry
+
+![스크린샷 2020-06-13 오후 9.19.11](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqyzrv24qj30s50kddha.jpg)
+
+`retry` 연산자는 Observable에서 에러가 발생하면, Observable에 대한 구독을 해제하고 새로운 구독을 시작한다. 새로운 구독이 시작되기 때문에 당연히 Observable 시퀀스는 처음부터 다시 시작된다. Observable에서 에러가 발생하지 않는다면 정상적으로 종료되고, 에러가 발생하면 또 다시 새로운 구독을 시작한다.
+
+
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+   case error
+}
+
+var attempts = 1
+
+let source = Observable<Int>.create { observer in
+   let currentAttempts = attempts
+   print("#\(currentAttempts) START") // #1
+   
+   if attempts < 3 {
+      observer.onError(MyError.error)
+      attempts += 1
+   }
+   
+   observer.onNext(1)
+   observer.onNext(2)
+   observer.onCompleted()
+         
+   return Disposables.create {
+      print("#\(currentAttempts) END") // #2
+   }
+}
+
+source
+// #3
+   .subscribe { print($0) }
+   .disposed(by: bag)
+
+/* 출력값
+#1 START
+error(error)
+#1 END
+*/
+```
+
+
+
+이 코드는 `attempts` 변수에 저장된 값이 3보다 작다면 에러 이벤트를 방출하고 변수를 1 증가시킨다.
+
+그리고 `#1`, `#2`를 보면 시퀀스의 시작과 끝을 확인할 수 있는 로그가 추가되어있다.
+
+코드를 실행해보면 구독자에게 바로 에러 이벤트가 전달되고 실행이 중지된다.
+
+이제 `#3`에 retry 연산자를 추가해보자.
+
+![스크린샷 2020-06-13 오후 10.17.11](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqz46d0dkj30mz0j2wj6.jpg)
+
+retry 연산자는 두 가지 형태로 선언되어있다. 
+
+첫 번째 형태처럼 파라미터 없이 호출하면 Observable이 정상적으로 완료될 때까지 계속해서 재시도한다. 만약 Observable에서 반복적으로 에러가 발생하면, 재시도 횟수가 늘어나고 그만큼 리소스가 낭비된다. 심한 경우 무한 루프에 빠져 터치 이벤트를 처리할 수 없거나 앱이 강제 종료되는 문제가 발생한다. 그래서 가급적 파라미터 없이 retry 연산자를 호출하는 것은 피해야 한다.
+
+이어서 아래 쪽에 있는 두 번째 형태를 보면 최대 재시도 횟수를 파라미터로 받는다. 그래서 앞에서 설명한 문제는 발생하지 않는다. 재시도 횟수를 파라미터로 전달할 때에는 
+
+![스크린샷 2020-06-13 오후 10.19.54](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqz6zq9r1j30j601bt9b.jpg)
+
+**이 설명처럼 `원하는 재시도 횟수 + 1`을 전달해야한다**
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+var attempts = 1
+
+let source = Observable<Int>.create { observer in
+  let currentAttempts = attempts
+  print("#\(currentAttempts) START")
+  
+  if attempts < 3 { // #2
+    observer.onError(MyError.error)
+    attempts += 1
+  }
+  
+  observer.onNext(1)
+  observer.onNext(2)
+  observer.onCompleted()
+  
+  return Disposables.create {
+    print("#\(currentAttempts) END")
+  }
+}
+
+source
+  .retry() // #1
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+/* 출력값
+#1 START
+#1 END
+#2 START
+#2 END
+#3 START
+next(1)
+next(2)
+completed
+#3 END
+*/
+```
+
+`#1`에 retry 연산자를 사용하고 코드를 실행하면 처음 두 번의 시도는 실패하고, 세 번째 시도에 성공한다. 
+
+이런 결과가 나온 이유는 `#2`에서 설정된 조건으로 인해 `attempts`변수에 저장된 값이 3보다 작을 때에만 에러 이벤트를 전달하기 때문이다. 만약 조건을 `attempts > 0`으로 바꾼다면 계속해서 무한한 에러 이벤트가 전달될 것이다. 
+
+
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+var attempts = 1
+
+let source = Observable<Int>.create { observer in
+  let currentAttempts = attempts
+  print("#\(currentAttempts) START")
+  
+  if attempts > 0 { // #1
+    observer.onError(MyError.error)
+    attempts += 1
+  }
+  
+  observer.onNext(1)
+  observer.onNext(2)
+  observer.onCompleted()
+  
+  return Disposables.create {
+    print("#\(currentAttempts) END")
+  }
+}
+
+source
+  .retry(7) // #2
+  .subscribe { print($0) }
+  .disposed(by: bag)
+
+/*출력값
+#1 START
+#1 END
+#2 START
+#2 END
+#3 START
+#3 END
+#4 START
+#4 END
+#5 START
+#5 END
+#6 START
+#6 END
+#7 START
+#7 END
+error(error)
+*/
+```
+
+ `#1`과 같이 조건을 변경하고 실행하자 7번의 시도가 콘솔에 출력되었다.
+
+이는 `#2`에서 최대 재시도 횟수를 7로 설정해주었기 때문이다. 마지막 결과 역시 실패라면 구독자에게 에러 이벤트를 전달하고 구독이 종료된다. 
+
+하지만 이건 엄밀히 말해 7번의 재시도가 아니라, 6번의 재시도이다. 왜냐면 첫 번째 시도는 재시도가 아니기 때문이다. 첫 번째 실행에서 에러 이벤트가 전달되면 다시 처음부터 실행하게 되는데, `#2 START`가 출력된 시점이 첫 번째 재시도인 것이다. 그래서 실제 재시도 횟수는 7회가 아니라 6회이다. 
+
+이렇듯 최대 재시도 횟수를 전달할 때에는 원하는 횟수에 1을 더해서 전달해야한다. 그래야 원하는 횟수만큼 재시도할 수 있다.
+
+그리고 만약 최대 재시도 횟수 이내에 작업이 성공하면 더는 시도하지 않는다.
+
+retry 연산자는 에러 이벤트가 발생한 즉시 재시도하기 때문에 재시도 시점을 제어하는 것은 불가능하다. 네트워크 요청에서 에러가 발생했다면 정상적인 응답을 받거나 최대 횟수에 도달할 때까지 계속해서 재시도한다. 
+
+만약 사용자가 재시도 버튼을 탭하는 순간에만 재시도하도록 하고 싶다면, `retryWhen` 연산자를 사용해야한다.
+
+
+
+#### retryWhen
+
+![스크린샷 2020-06-13 오후 10.30.36](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfqzi4oi5bj30mo0frwjg.jpg)
+
+retryWhen 연산자는 클로저를 파라미터로 받는다. 클로저의 파라미터로는 발생한 에러를 방출하는 Observable이 전달된다. 그리고 클로저는 TriggerObservable을 리턴한다. TriggerObservable이 next event를 전달하는 시점에 Source Observable에서 새로운 구독을 시작한다. 다시 말해 `재시도`한다.
+
+```swift
+let bag = DisposeBag()
+
+enum MyError: Error {
+  case error
+}
+
+var attempts = 1
+
+let source = Observable<Int>.create { observer in
+  let currentAttempts = attempts
+  print("START #\(currentAttempts)")
+  
+  if attempts < 3 {
+    observer.onError(MyError.error)
+    attempts += 1
+  }
+  
+  observer.onNext(1)
+  observer.onNext(2)
+  observer.onCompleted()
+  
+  return Disposables.create {
+    print("END #\(currentAttempts)")
+  }
+}
+
+let trigger = PublishSubject<Void>() // #1
+
+source
+  .retryWhen { _ in trigger} // #2
+  .subscribe { print($0) }
+  .disposed(by: bag)
+ // #3
+/* 출력값
+START #1
+END #1
+*/
+
+trigger.onNext(()) // #4
+/* 출력값
+START #2
+END #2 
+*/
+
+trigger.onNext(()) // #5
+/*출력값
+START #3
+next(1)
+next(2)
+completed
+END #3
+*/
+```
+
+이전과 같은 코드에 `trigger` 상수를 `#1`에서 선언하고, `#2`의 retryWhen 연산자의 클로저가 trigger를 리턴하도록 작성된 코드이다. `#3`까지의 코드를 실행하면, Source Observable에서 에러 이벤트가 발생하기 때문에 구독자에게 전달되지 않는데, 바로 재시도하지 않고 `trigger`에서 next event가 발생하기를 기다린다.
+
+이어 `#4`에서 `trigger` subject에 next event를 전달하면 Source Observable에서 새로운 구독이 시작된다. 그리고 이번에도 Source Observable에서 에러 이벤트가 발생하기 때문에 다시 대기한다. 
+
+마지막 재시도에서는 에러가 발생하지 않는다. 이때는 next event와 completed 이벤트가 정상적으로 전달되고, 구독이 종료된다.
 
