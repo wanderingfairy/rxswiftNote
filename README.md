@@ -81,12 +81,18 @@
   - [share](#share)
 - [17.Scheduler](#17scheduler)
   - [Scheduler의 사용](#scheduler%EC%9D%98-%EC%82%AC%EC%9A%A9)
-- [17. Error Handling](#17-error-handling)
+- [18. Error Handling](#18-error-handling)
   - [catchError](#catcherror)
   - [catchErrorJustReturn](#catcherrorjustreturn)
   - [retry, retryWhen](#retry-retrywhen)
     - [retry](#retry)
     - [retryWhen](#retrywhen)
+- [19. RxCocoa](#19-rxcocoa)
+  - [UIButton + Rx](#uibutton--rx)
+  - [UILable + Rx](#uilable--rx)
+  - [Cocoa --> RxCocoa](#cocoa----rxcocoa)
+  - [Binding](#binding)
+    - [Binding 구현](#binding-%EA%B5%AC%ED%98%84)
 
 ---
 
@@ -5533,7 +5539,7 @@ completed
 
 ---
 
-## 17. Error Handling
+## 18. Error Handling
 
 RxSwift에서는 에러를 처리하기 위한 여러 방법을 사용할 수 있다.
 
@@ -5952,4 +5958,352 @@ END #3
 이어 `#4`에서 `trigger` subject에 next event를 전달하면 Source Observable에서 새로운 구독이 시작된다. 그리고 이번에도 Source Observable에서 에러 이벤트가 발생하기 때문에 다시 대기한다. 
 
 마지막 재시도에서는 에러가 발생하지 않는다. 이때는 next event와 completed 이벤트가 정상적으로 전달되고, 구독이 종료된다.
+
+
+
+---
+
+## 19. RxCocoa
+
+RxCocoa는 기존 Cocoa Framework에 Reacive Library의 장점을 더 해주는 라이브러리이다. iOS 플랫폼 뿐아니라 Apple에서 지원하는 모든 플랫폼을 지원한다.
+
+RxCocoa는 RxSwift를 기반으로하는 별도의 라이브러리이다. 그래서 RxCocoa를 사용하려면 Podfile 내부에 개별적으로 추가해야한다.
+
+![스크린샷 2020-06-14 오전 12.36.12](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr34tl9tcj309m024mxj.jpg)
+
+
+
+---
+
+#### UIButton + Rx
+
+Pods>Pods>RxCocoa > UIButton+Rx.swift 파일을 보자.
+
+![스크린샷 2020-06-14 오전 12.37.33](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr3689m5jj30g205bq3s.jpg)
+
+여기에는 UIButton Class를 확장한 코드가 있다. 
+
+extention으로 Reactive 형식을 확장하고 있는데, 기존 Cocoa 클래스를 확장한 경우 대부분 이런 식으로 구현되어 있다. 
+
+![스크린샷 2020-06-14 오전 12.39.57](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr38osjlsj30ce08hab3.jpg)
+
+우선 위에서 확장하고 있는 `Reactive`가 어떤 형식인지 보자. Reactive는 RxSwift 라이브러리에 제네릭 구조체로 선언되어있다. 
+
+
+
+![스크린샷 2020-06-14 오전 12.40.53](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr39pcizrj30lw026glv.jpg)
+
+이 설명과 같이, 형식을 Reactive 형식으로 확장할 때 사용하는 형식이다. 
+
+Reactive 구조체 안에는 `base` 라는 형식이 선언되어 있는데, 확장할 형식의 인스턴스가 저장된다. 
+
+![스크린샷 2020-06-14 오전 12.42.01](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr3awdsk5j30iv0au76g.jpg)
+
+아래쪽에는 `ReactiveCompatible` 프로토콜이 선언되어 있다. 
+
+이 프로토콜의 역할은 기존 형식에 `rx`라는 속성을 추가하는 것이다.
+
+이것은 rx라는 네임 스페이스를 추가하는 것과 같다. RxCocoa가 제공하는 대부분의 extension은 이 rx속성, 다시 말해 네임 스페이스를 통해 제공된다.
+
+![스크린샷 2020-06-14 오전 12.44.01](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr3cx89k8j30i80g440h.jpg)
+
+다시 아래 쪽을 보면, `ReactiveCompatible` 프로토콜에 기본 구현을 추가하는 프로토콜 extension이 있다. 이 프로토콜에는 `rx`라는 타입 프로퍼티와, instance 프로퍼티가 자동으로 추가된다. 
+
+> ####  + 프로토콜 기본 구현에 대해 (Default Implementation)
+>
+> Swift의 프로토콜은 기본적으로는 objc에서의 프로토콜과 같은 기능을 수행한다. 그렇지만 Swift에서는 Protocol을 Extension 할 수 있게 됨으로써 '기본 구현'이 가능해졌다.
+>
+> 부가적인 기능을 추가할 수 있는 기능인 Extension을 통해 프로토콜 자체에 메서드를 구현해줄 수 있고, 어떤 연산 프로퍼티 또한 제공해줄 수 있게 되었다.
+>
+> objc의 경우 프로토콜에 카테고리를 추가해줄 수 없었는데 Swift에서는 그것이 가능해졌다.
+>
+> 그래서 Protocol에 특정 타입이 할 일을 명시해주는 것과 동시에 그 역할들을 수행하는 기능을 구현해주는 것까지 한 번에 가능하다.
+
+
+
+![스크린샷 2020-06-14 오전 12.45.36](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr3embjqjj30bo03bq3f.jpg)
+
+코드 마지막 부분에는 NSObject가 `ReactiveCompatible` 프로토콜을 채용하도록 하는 코드가 있다. NSObject는 Cocoa Framework에 있는 모든 클래스가 상속하는 Root 클래스이기 때문에 결과적으로 모든 클래스에 `rx`라는 속성, 즉 네임 스페이스가 자동으로 추가된다. 
+
+> 네임 스페이스에 대한 글은 유명한 블로그인 ZeddiOS의 https://zeddios.tistory.com/353 를 참고하면 좋다.
+
+
+
+![스크린샷 2020-06-14 오전 12.37.33](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr3689m5jj30g205bq3s.jpg)
+
+다시 처음의 UIButton에 관한 Extension을 보자. extension은 조금 전에 다룬 Reactive 형식을 확장하고 있고, Base를 UIButton으로 제한하고 있다. UIButton은 NSObject를 상속한 속성이기 때문에 `rx` 속성이 자동으로 추가된다. 
+
+이 `rx` 속성을 통해서 extension에 선언되어있는 멤버(이 때에는 `tap`)에 접근할 수 있다.
+
+이 익스텐션에는 `tap`이라는 멤버가 ControlEvent 형식으로 선언되어 있다. ControlEvent는 RxCocoa가 제공하는 `Traits`이다. `Traits`는 UI 처리에 특화된 Observable이고, ControlEvent 뿐만 아니라 `driver`, `signal` 등 고유한 특성을 가진 `Traits`가 제공된다. 
+
+이후에 `Traits`에 대해 다루겠지만, 지금 당장 더 궁금하다면 아래 주소에서 조금 더 많은 정보를 확인할 수 있다.
+
+https://github.com/ReactiveX/RxSwift/blob/master/Documentation/Traits.md
+
+https://kampro.github.io/swift/ios/2019/03/20/rxswift-traits.html
+
+
+
+다시 돌아가서, `tap`은 특별한 Observable이기 때문에 구독할 수 있다. 버튼에서 TouchUpInside Event가 발생할 때마다, 구독자에게 next event가 전달된다.
+
+
+
+---
+
+#### UILable + Rx
+
+![스크린샷 2020-06-14 오전 1.16.30](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr4aqeqvzj30g90f90uz.jpg)
+
+UILable + Rx의 익스텐션 구조는 UIButton과 동일하다. 여기에는 `text` 속성과 `attributedText` 속성이 선언되어 있다. 
+
+그런데 이 속성은 기존 Cocoa의 UILable에 있는 속성과 동일하다. 하나의 형식에 같은 이름을 가진 멤버가 두 개 이상 존재할 수 없지만 여기에서는 전혀 문제가 되지 않는다. 
+
+앞에서 설명했듯이 여기에 있는 멤버는 `rx` Name Space에 추가되기 때문이다.
+
+```swift
+let label = UILable()
+label.text // #1
+label.rx.text // #2
+```
+
+UILable에 있는 text 속성에 접근할 때는 인스턴스 이름을 통해 `#1`과 같이 바로 접근하고,
+
+RxCocoa가 확장한 text 속성에 접근할 때는 `rx` 네임스페이스를 통해 접근하기 때문이다. 
+
+그리고 같은 이름을 가지고 있기 때문에 오히려 기존 속성과의 연관성이 더 직관적으로 표현된다. 
+
+`text` 속성의 형식을 보면 `Binder`형식으로 지정되어 있다. `Binder`는 Interface Binding에 사용되는 특별한 Observer이다. 
+
+![스크린샷 2020-06-14 오전 1.23.16](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr4hydgydj306d0iydjp.jpg)
+
+나머지 파일을 보아도 기존 Cocoa에서 익숙하게 사용하던 이름들이 보인다. RxCocoa는 이런 자주 사용하는 기본 기능들에 대한 확장을 제공한다. 만약 필요한 확장이 없다면 직접 구현하는 것도 가능하다. 
+
+---
+
+#### Cocoa --> RxCocoa
+
+
+
+![스크린샷 2020-06-14 오전 1.30.18](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr4p4tzsij30ea0cc0u9.jpg)
+
+lable과 button 하나를 갖는 화면이다. 버튼을 탭하면 Lable의 text를 "Hello, RxCocoa"로 바뀌는 걸 구현해보도록 하자.
+
+RxCocoa에서 탭 이벤트를 사용할 때에는, 위에서 확인했던 `tap` 속성을 활용해야 한다.
+
+![스크린샷 2020-06-14 오전 1.27.07](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr4lshuzsj30i803xq4k.jpg)
+
+`tap`속성은 ControlEvent 형식으로 선언되어 있고, TouchUpInside Event가 발생하면 Next Event를 방출하는 특별한 Observable이다. 
+
+이때 `map` 연산자를 사용하면 `tap`에서 방출된 next event를 문자열로 바꿀 수 있다.
+
+```swift
+   override func viewDidLoad() {
+      super.viewDidLoad()
+    
+    tapButton.rx.tap
+      .map { "Hello, RxCocoa" }
+    
+   }
+```
+
+이후, 구독자를 추가해야 Observable이 생성되고 이벤트를 방출하기 시작할 것이다.
+
+RxSwift에서는 구독자를 추가할 때 `subscribe` 메소드를 이용했는데, RxCocoa는 더 쉬운 방법을 제공한다.
+
+```swift
+    tapButton.rx.tap
+      .map { "Hello, RxCocoa" }
+      .bind(to: valueLabel.rx.text) // #1
+      .disposed(by: bag)
+```
+
+`#1`의 `bind` 메소드인데, 이렇게 하면 전달된 문자열이 `valueLable`의 `rx.text` 속성에 바인딩된다. 실행하여 버튼을 탭하면 레이블이 업데이트된다.
+
+
+
+---
+
+### Binding
+
+![스크린샷 2020-06-14 오전 2.28.03](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr6dacjqkj30kt09laar.jpg)
+
+바인딩은 여러 의미로 사용되지만, 이번에는 데이터를 UI에 표시하기 위한 방법으로 사용한다.
+
+바인딩에는 데이터 생산자(Data Producer)와 데이터 소비자(Data Consumer)가 있다. 
+
+데이터 생산자는 Observable이다. ObservableType을 채용한 모든 형식이 생산자가 된다.
+
+데이터 소비자는 Label이나 ImageView 같은 UI Component이다. 생산자가 생산한 데이터는 소비자에게 전달되고, 소비자는 적절한 방식으로 데이터를 소모한다. 예를 들어 Label은 전달된 Text를 화면에 표시한다. 
+
+반대로 소비자가 생산자에게 데이터나 이벤트를 전달하는 경우는 없다. 
+
+Binder는 UI Binding에 사용되는 특별한 Observer이다. 데이터 소비자의 역할을 수행한다.
+
+Observer이기 때문에 Observable이 바인더에게 새로운 값을 전달할 수는 있지만, 
+
+Binder는 Observable이 아니기 때문에 구독자를 추가하는 것은 불가능하다. 
+
+![스크린샷 2020-06-14 오전 2.26.10](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr6b9b0kfj30mr0c2t9e.jpg)
+
+그리고 바인더는 에러 이벤트를 받지 않는다. 만약 Error Event를 전달하면, 실행 모드에 따라 Crash가 발생하거나, 에러 메시지가 출력된다. 
+
+Observer에서 에러 이벤트가 전달되면, Observable 시퀀스가 종료되는데 이 경우 더 이상의 next event가 전달되지 않기 때문에 Binding된 UI가 더 이상 업데이트 되지 않는 문제가 있다.
+
+이 문제를 피하기 위해 Error 이벤트를 받지 않는 것이다. 
+
+Binding이 성공하면 UI가 업데이트 된다. UI 코드는 메인 스레드에서 실행해야한다.
+
+바인더는 바인딩이 메인 쓰레드에서 실행되는 것을 '보장'한다.
+
+  
+
+#### Binding 구현
+
+
+
+![스크린샷 2020-06-14 오전 2.58.13](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr78mzu7nj30v30u0al8.jpg)
+
+텍스트 필드에 어떤 텍스트를 입력할 때마다, `textLable`의 텍스트가 `textfield`에 입력한 텍스트로 바뀌는 기능을 RxCocoa로 구현해보자.
+
+먼저 Pods > Pods > RxCocoa > UITextField + Rx.swift 파일을 보자.
+
+ ![스크린샷 2020-06-14 오전 3.00.43](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr7b62dp7j30da04gwf5.jpg)
+
+여기에 보면 `text` 속성이 ControlProperty 타입으로 선언되어있다. ControlProperty는 데이터를 특정 UI에 Binding할 때 사용하는 특별한 Observable이다. 
+
+그리고 ControlProperty의 타입 파라미터가 Optional String으로 선언되어있다. 
+
+text 속성이 변경될 때마다 next event를 방출하는데, 이 next event에는 Optional String 타입의 데이터가 저장되어 있는 것이다. 
+
+```swift
+  let bag = DisposeBag() //먼저 DisposeBag() 인스턴스 선언
+
+override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    textField.becomeFirstResponder()
+    
+    textField.rx.text // #1
+    
+    setupUI()
+  }
+```
+
+
+
+먼저 `textField`속성의 text에 접근해야한다. `#1`과 같이 `rx` 네임 스페이스를 통해 접근한다. `textField.rx.text` 속성은 ControlProperty 형식으로 선언되어있고, ControlProperty은 특별한 Observable이다. 한 종류의 Observable이기 때문에 구독이 가능하다. 
+
+구독 방법은 이전까지와 완전히 동일하다.
+
+```swift
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    textField.becomeFirstResponder()
+    
+    textField.rx.text
+      .subscribe(onNext: { [weak self] str in
+        self?.textLabel.text = str
+      })
+      .disposed(by: bag)
+    
+    setupUI()
+  }
+```
+
+RxCocoa가 확장한 text 속성은 텍스트 필드에 입력된 값이 업데이트 될 때마다 next event를 전달한다. 구독자는 이벤트에 포함된 문자열을 Label에 포함하고 있다. 
+
+![스크린샷 2020-06-14 오전 3.09.20](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr7k5sxvrj30u00vmamk.jpg) 
+
+실행해보면 잘 동작한다. 하지만 Cocoa로도 구현해본다고 생각하고 비교해보면 훨씬 단순해졌다는 걸 알 수 있다.
+
+UITextFieldDelegate를 구현할 필요가 없고, 최종 문자열을 조합하는 코드도 필요하지 않아졌다. 그리고 코드만으로 데이터 흐름을 파악하기가 용이해졌다. 
+
+```swift
+    textField.rx.text
+      .subscribe(onNext: { [weak self] str in
+        self?.textLabel.text = str // #1
+      })
+      .disposed(by: bag)
+```
+
+하지만 이 코드에는 한 가지 문제가 있다. 
+
+UI를 업데이트하는 `#1` 코드는 반드시 메인 쓰레드에서 실행되어야 한다. 
+
+지금은 subscribe 메소드가 Main Thread에서 호출되기 때문에 문제가 없지만, 구현에 따라서는 Background Thread에서 실행될 수도 있다. 
+
+이런 문제를 해결하는 방법은 크게 두 가지가 있다. 
+
+1. GCD를 사용하여 쓰레드를 지정해주는 방법
+
+   ```swift
+   textField.rx.text
+         .subscribe(onNext: { [weak self] str in
+           DispatchQueue.main.async {
+             self?.textLabel.text = str
+           }
+         })
+         .disposed(by: bag)
+   ```
+
+   
+
+2. observeOn 메소드를 사용하는 방법
+
+   ```swift
+       textField.rx.text
+         .observeOn(MainScheduler.instance)
+         .subscribe(onNext: { [weak self] str in
+             self?.textLabel.text = str
+         })
+         .disposed(by: bag)
+   ```
+
+   
+
+1번처럼 기존 GCD를 이용하거나, 2번과 같이 rx를 활용하여 메인 쓰레드에서 동작하도록 지정해줄 수 있다. 
+
+하지만 이 두 개의 방법은 RxCocoa에서는 거의 쓰이지 않는다. 더 나은 방법이 있기 때문이다. 
+
+다시 Pods > RxCocoa폴더의 UILabel + Rx.swift 파일을 보자. 
+
+![스크린샷 2020-06-14 오전 3.20.19](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr7vm352bj30gc0d340j.jpg)
+
+여기에는 두 가지 속성이 선언되어 있는데, 이들의 타입을 보면 앞에서 공부한 `Binder`로 선언되어있다. Binder는 UI Binding에 활용하는 특별한 Observer이다. 이 속성을 활용해보자. 
+
+```swift
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    textField.becomeFirstResponder()
+    
+    textField.rx.text
+      .bind(to: textLabel.rx.text)
+      .disposed(by: bag)
+    
+    setupUI()
+  }
+```
+
+subscribe 메소드 대신 bind를 사용한다. bind 메소드 다양한 파라미터를 받는데, 이중에서 ObserverType을 받는 메소드를 사용해보았다. `UILabel.rx.text`의 형식인 `Binder`는 ObserverType을 채용한 형식이다. 그래서 `#1`처럼 text 속성을 파라미터로 전달할 수 있다. 
+
+![화면 기록 2020-06-14 오전 4.19.53.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfr9nu7iedg30720dwh0g.gif)
+
+실행하여 text를 입력하면, UITextField에 선언되어있는 text 속성이 업데이트 될 것이다. 
+
+그러면 RxCocoa가 확장한 rx.text 속성이 next event를 방출한다. 이 next event에는 현재 text가 저장되어있다. 
+
+이때 bind(to: )메소드는 Observable이 전달한 이벤트를 Observer에게 전달한다. 
+
+여기에서는 RxCocoa가 UILabel에 추가한 text속성으로 전달된다. 이 text는 Binder 형식이다. next event에 포함되어있는 값을 꺼내서, UILabel에 있는 기본 text 속성에 저장한다.
+
+결과적으로 textField의 text와 textLabel의 text가 바인딩되어서, 항상 동일한 값을 표시한다.
+
+이전의 코드들보다 훨씬 적은 코드로 같은 기능을 구현할 수 있을 뿐만 아니라, Binder는 언제나 Binding 작업을 Main Thread에서 실행하기 때문에 더 이상 쓰레드에 대해 신경쓸 필요가 없다는 장점이 있다. 
+
+
+
+---
 
