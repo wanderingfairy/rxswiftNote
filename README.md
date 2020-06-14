@@ -93,6 +93,14 @@
   - [Cocoa --> RxCocoa](#cocoa----rxcocoa)
   - [Binding](#binding)
     - [Binding 구현](#binding-%EA%B5%AC%ED%98%84)
+  - [RxCocoa Traits](#rxcocoa-traits)
+  - [Control Event, Control Property](#control-event-control-property)
+    - [ControlProperty의 특징](#controlproperty%EC%9D%98-%ED%8A%B9%EC%A7%95)
+    - [UI Control의 Event](#ui-control%EC%9D%98-event)
+    - [ControlEvent, ControlProperty를 이용한 구현 예제](#controlevent-controlproperty%EB%A5%BC-%EC%9D%B4%EC%9A%A9%ED%95%9C-%EA%B5%AC%ED%98%84-%EC%98%88%EC%A0%9C)
+  - [Driver](#driver)
+    - [Driver의 특징](#driver%EC%9D%98-%ED%8A%B9%EC%A7%95)
+    - [Driver를 이용한 구현 예제](#driver%EB%A5%BC-%EC%9D%B4%EC%9A%A9%ED%95%9C-%EA%B5%AC%ED%98%84-%EC%98%88%EC%A0%9C)
 
 ---
 
@@ -6306,4 +6314,705 @@ subscribe 메소드 대신 bind를 사용한다. bind 메소드 다양한 파라
 
 
 ---
+
+### RxCocoa Traits
+
+![스크린샷 2020-06-14 오전 4.42.08](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfra8s04gej30mg0eiq40.jpg)
+
+Traits는 UI 처리에 특화된 Observable이다. Observable이기 때문에, UI Binding에서 데이터 생산자 역할을 수행한다. 데이터 소비자 역할을 수행하는 Binder와 반대의 개념이다.
+
+
+
+RxCocoa는 총 4가지 종류의 Traits를 제공한다. (`ControlProperty`, `ControlEvent`, `Driver`, `Signal`)
+
+Traits는 UI에 특화된 Observable이고 모든 작업은 MainScheduler, 즉 Main Thread에서 실행된다. 그래서 UI 관련 코드를 작성할 때 스케쥴러를 직접 지정할 필요가 없다.
+
+Observable 시퀀스가 에러 이벤트로 인해 종료되면, UI는 더 이상 업데이트 되지 않는다.
+
+하지만 Traits는 에러 이벤트를 전달하지 않기 때문에 이런 문제는 발생하지 않는다. 
+
+UI가 항상 올바른 스레드에서 업데이트 되는 것을 보장한다. 
+
+
+
+Observable을 구독하면 새로운 시퀀스가 시작되는 것이 기본이다. 하지만 Traits의 경우에는Observable이긴 해도, 새로운 시퀀스가 시작되지는 않는다. 
+
+![스크린샷 2020-06-14 오전 4.48.13](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfraf0r3b5j30kc0bfjs0.jpg)
+
+**Traits를 구독하는 모든 구독자는 동일한 시퀀스를 공유한다. 즉 일반 Observable에서 share 연산자를 사용한 것과 동일한 방식으로 동작한다.**
+
+이것이 Traits의 기본적인 속성들이다. 
+
+> RxCocoa를 사용할 때 반드시 Traits를 사용해야하는 것은 아니다. 하지만 UI 구현에 있어서는 매우 중요한 요소이다. Traits를 사용하면 항상 UI 작업을 메인 스레드에서 실행해주고 단순한 코드를 작성할 수 있으니, 적극적으로 활용하는 것을 추천한다.
+
+
+
+---
+
+### Control Event, Control Property
+
+![스크린샷 2020-06-14 오후 10.32.19](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs569gwblj30no0cj753.jpg)
+
+Cocoa Framework가 제공하는 View에는 다양한 속성들이 선언되어 있다. 
+
+RxCocoa는 Extention으로 Cocoa의 View를 확장하고, 동일한 이름을 가진 속성을 추가한다. 
+
+이런 속성들은 대부분 Control Property 형식으로 선언되어 있다. 
+
+![스크린샷 2020-06-14 오후 10.35.13](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs59aey65j30if04u75c.jpg)
+
+![스크린샷 2020-06-14 오후 10.35.33](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs59nkkqtj30iu00xq35.jpg)
+
+ControlProperty는 제네릭 구조체로 선언되어 있고, ControlPropertyType 프로토콜을 채택하고 있다. 
+
+ControlPropertyType 프로토콜은 ObservableType과 ObserverType 프로토콜을 상속하고 있다. 
+
+ControlProperty는 특별한 Observable이면서 동시에 특별한 Observer이다.
+
+ControlProperty가 읽기 전용 속성을 확장했다면 Observable의 역할만 수행하고, 읽기와 쓰기가 모두 가능하다면 Observer의 역할도 함께 수행한다.
+
+#### ControlProperty의 특징
+
+![스크린샷 2020-06-14 오후 10.42.00](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs5gbeo8hj30qr0chgmk.jpg)
+
+ControlProperty는 UI Binding에 사용되므로 에러 이벤트를 전달 받지도, 전달 하지도 않는다. Completed 이벤트는 Control이 제거되기 직전에 전달된다. 그리고 모든 이벤트는 메인 스케쥴러에서 전달된다. 
+
+![스크린샷 2020-06-14 오후 10.47.45](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs5mbcyeyj30p60cywf6.jpg)
+
+ControlProperty는 시퀀스를 공유한다.(일반 Observable에서 share 연산자를 호출하고, share 연산자의 replay파라미터에 1을 전달한 것과 동일한 형식으로 동작한다.) 그래서 새로운 구독자가 추가되면, 가장 최근에 저장된 속성값이 바로 전달된다.
+
+#### UI Control의 Event
+
+![스크린샷 2020-06-14 오후 10.50.44](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs5pdzbduj30pg0dgaaw.jpg)
+
+UI Control을 상속한 Control들은, 다양한 이벤트를 전달한다. RxCocoa가 확장한 Extension에는 event를 Observable로 래핑한 속성이 추가되어있다.
+
+예를 들어 UIButton의 extension을 보면, `tap`이라는 속성이 선언되어 있다. 이 `tap`속성은 ControlEvent 형식으로 선언되어 있다. 
+
+
+
+![스크린샷 2020-06-14 오후 10.58.06](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs5x5reaej30gh0140sx.jpg)
+
+ControlEvent는 ControlEventType Protocol을 채택한 제네릭 구조체이다. 
+
+![스크린샷 2020-06-14 오후 10.57.29](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs5wfya4vj30e104rdgo.jpg)
+
+ControlEventType Protocol은 ObservableType 프로토콜만을 상속하고 있다. 
+
+그래서 ControlProperty와 달리 Observable의 역할은 수행하지만 Observer의 역할은 수행하지 못한다. 
+
+![스크린샷 2020-06-14 오후 10.56.48](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs5vre3buj30lo0fs751.jpg)
+
+ControlEvent는 ControlProperty와 여러 공통점을 가지고 있다. 에러 이벤트를 전달하지 않고 Completed 이벤트는 Control이 해제되기 직전에 전달된다. 그리고 메인 스케쥴러에서 이벤트를 전달하는 것도 동일하다. 
+
+![스크린샷 2020-06-14 오후 10.59.52](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs5yvx144j30ou0dgwf3.jpg)
+
+하지만 ControlProperty와 달리 ControlEvent는 가장 최근의 Event를 replay하지 않는다. 그래서 새로운 구독자는 구독 이후에 방출된 이벤트만 전달 받는다.
+
+---
+
+#### ControlEvent, ControlProperty를 이용한 구현 예제
+
+![image-20200614234756074](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs7cuilhnj30sd0t4gw8.jpg)
+
+구현 목표
+
+- UISlider를 드래그할 때마다 즉각 colorView의 background 속성이 변화한다.
+- reset 버튼을 탭하면 초기 세팅으로 돌아간다.
+
+초기 세팅
+
+- `colorView`는 아래 세 개의 slider 에서 조정하는 RGB 값에 따른 색상을 표현한다.
+- UISlider들과 연결된 Action or Objc 메서드는 존재하지 않는다. 
+
+우선 Pods > Pods > RxCocoa의 UIView + Rx.swift 파일을 보자.
+
+![스크린샷 2020-06-14 오후 11.49.35](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs7eoifi0j30i90p30x8.jpg)
+
+extension을 살펴보면, `backgroundColor`가 Binder 형식으로 선언되어 있다. 이 형식은 `bind(to:_)`메서드를 통해 새로운 컬러를 바인딩할 수 있다. 
+
+
+
+이어서 이번에는 Pods > Pods > RxCocoa의 UILable + Rx.swift을 보자.
+
+![스크린샷 2020-06-14 오후 11.53.09](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs7iby67yj30gh0cwwgi.jpg)
+
+`text`속성이 Binder 형식으로 선언되어 있다. 이것도 마찬가지로 `bind(to:_)`메서드를 사용하여 바인딩할 수 있다. 
+
+이어서 UISlider + Rx.swift 파일도 확인해보자.
+
+![스크린샷 2020-06-14 오후 11.54.28](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs7jo4gioj30fe0ayq4d.jpg)
+
+Cocoa의 UISlider를 드래그하면 Value 속성이 업데이트 되는데, 
+
+RxCocoa의 extension에도 같은 이름의 속성이 `ControlProperty`형식으로 선언되어 있다. Value 속성이 업데이트 되면, 새로운 next event를 방출한다. 
+
+마지막으로 UIButton + Rx.swift 파일도 확인해보자.
+
+![스크린샷 2020-06-14 오후 11.56.25](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfs7lpw23pj30fz05gt9k.jpg)
+
+여기에는 `tap`속성이 `ControlEvent`형식으로 선언되어 있다.  이 속성은 UIButton에서 touchUpInside가 발생할 때마다 next event를 방출한다. 
+
+이렇게 살펴본 `Binder`, `ControlProperty`, `ControlEvent를` 활용해서 예제를 구현해보자.
+
+---
+
+1. Slider의 value 속성을 Label의 text 속성과 바인딩한다.
+
+```swift
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    redSlider.rx.value
+      .map { String(Int($0)) } // #1
+      .bind(to: redValueLabel.rx.text )
+      .disposed(by: bag)
+    
+    greenSlider.rx.value
+      .map { String(Int($0)) }
+      .bind(to: greenValueLabel.rx.text )
+      .disposed(by: bag)
+    
+    blueSlider.rx.value
+      .map { String(Int($0)) }
+      .bind(to: blueValueLabel.rx.text )
+      .disposed(by: bag)
+    
+    setupUI()
+  }
+```
+
+
+
+슬라이더의 value가 방출하는 요소의 속성은 Float이기 때문에 `#1`의 `map` 연산자를 통해 정수 배열로 바꿔준다.
+
+이 코드는 viewDidLoad에서 작성했기 때문에 Main Thread 에서 실행된다.
+
+하지만 다른 스레드에서 실행하더라도 binding은 항상 메인 스레드에서 실행된다.
+
+`ControlProperty`와 `ControlEvent`는 항상 MainScheduler에서 이벤트를 전달한다. 
+
+그리고 Binder는 바인딩 작업이 항상 메인 스레드에서 실행되는 것을 보장한다. 그래서 스레드 처리에 따로 신경쓰지 않아도 항상 올바른 스레드에서 바인딩된다. 
+
+---
+
+2. 이제 슬라이더의 Red, Green, Blue 값에 따라서 `colorView`의 backgroundColor를 업데이트 한다.
+
+RGB 값에 따른 컬러를 생성하기 위해서는 모든 슬라이더의 현재 값이 필요하다. 슬라이더마다 하나씩 구독자를 추가하고, outlet을 통해 나머지 슬라이더에 접근하는 방식으로 구현해도 문제는 없다. 하지만 `combineLatest` 연산자를 활용하면 코드가 훨씬 단순해진다. 
+
+```swift
+    Observable.combineLatest([redSlider.rx.value, greenSlider.rx.value, blueSlider.rx.value])
+```
+
+이렇게하면 슬라이더를 드래그 할 때마다 모든 슬라이더의 값이 하나의 배열로 방출된다.
+
+이제 map 연산자를 활용해서 UIColor로 바꾸고 `colorView`의 backgroundColor에 바인딩하자.
+
+```swift
+    Observable
+      .combineLatest([redSlider.rx.value, greenSlider.rx.value, blueSlider.rx.value])
+      .map { UIColor(red: CGFloat($0[0]) / 255, green: CGFloat($0[1]) / 255, blue: CGFloat($0[2]) / 255, alpha: 1) }
+      .bind(to: colorView.rx.backgroundColor)
+      .disposed(by: bag)
+```
+
+![화면 기록 2020-06-15 오전 1.51.02.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfsaykktk9g30720dwwrq.gif)
+
+실행 결과 슬라이더를 움직일 때마다 Label의 text와 colorView의 backgroundColor가 업데이트 된다.
+
+---
+
+- 마지막으로 reset 버튼을 구현
+
+```swift
+resetButton.rx.tap
+```
+
+이번에는 `tap` 속성을 활용한다. 이 `tap`은 ControlEvent 형식이다. 
+
+버튼을 탭할 때 마다 next event를 방출하는 Observable이다. 
+
+여기에 구독자를 추가하고, UI를 초기화하는 코드를 작성하자.
+
+```swift
+    resetButton.rx.tap
+      .subscribe(onNext: { [weak self] in
+        self?.colorView.backgroundColor = .black
+                          
+        self?.redSlider.value = 0
+        self?.greenSlider.value = 0
+        self?.blueSlider.value = 0
+        
+        self?.redValueLabel.text = "0"
+        self?.greenValueLabel.text = "0"
+        self?.blueValueLabel.text = "0"
+      })
+      .disposed(by: bag)
+```
+
+위의 코드는 어떤 스레드에서 실행될까? 
+
+ControlEvent는 MainScheduler로 Event를 전달한다. 그래서 여기에서 구현한 코드는 항상 메인 스레드에서 실행된다. 
+
+하지만 subscribe 메서드를 호출하기 전에 `observeOn` 메서드로 스케쥴러를 바꿨다면, 이때는 메인 스레드에서 실행되지 않을 수도 있다. 이런 경우에는 다음에 공부할 `Driver`를 사용하면 문제가 해결된다.
+
+![화면 기록 2020-06-15 오전 2.01.22.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfsb8hmew3g30720dw76c.gif)
+
+실행하면 정상적으로 동작하는 걸 확인할 수 있다.
+
+아래는 위 예제의 전체 코드는 다음과 같다. (오토레이아웃 작업과 프로퍼티 관리의 용이함을 위해 `SnapKit`과 `Then` 라이브러리를 사용했다.)
+
+```swift
+import UIKit
+import RxSwift
+import RxCocoa
+
+class ColorSliderViewController: UIViewController {
+  
+  let bag = DisposeBag()
+  
+  let colorView = UIView().then {
+    $0.backgroundColor = .init(red: 255, green: 0, blue: 0, alpha: 1)
+  }
+  
+  let redSlider = UISlider().then {
+    $0.maximumValue = 255
+    $0.minimumValue = 0
+    $0.value = 255
+  }
+  let greenSlider = UISlider().then {
+    $0.maximumValue = 255
+    $0.minimumValue = 0
+    $0.value = 0
+  }
+  let blueSlider = UISlider().then {
+    $0.maximumValue = 255
+    $0.minimumValue = 0
+    $0.value = 0
+  }
+  
+  let redLabel = UILabel().then { $0.text = "Red" }
+  let greenLabel = UILabel().then { $0.text = "green" }
+  let blueLabel = UILabel().then { $0.text = "blue" }
+  
+  let redValueLabel =  UILabel().then {
+    $0.text = "255"
+  }
+  let greenValueLabel = UILabel().then {
+    $0.text = "0"
+  }
+  let blueValueLabel = UILabel().then {
+    $0.text = "0"
+  }
+  
+  let resetButton = UIButton().then {
+    $0.setTitle("Reset", for: .normal)
+    $0.setTitleColor(.black, for: .normal)
+    $0.titleLabel?.font = UIFont.systemFont(ofSize: 24, weight: .bold)
+    $0.titleLabel?.textAlignment = .center
+  }
+  
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    redSlider.rx.value
+      .map { String(Int($0)) }
+      .bind(to: redValueLabel.rx.text )
+      .disposed(by: bag)
+    
+    greenSlider.rx.value
+      .map { String(Int($0)) }
+      .bind(to: greenValueLabel.rx.text )
+      .disposed(by: bag)
+    
+    blueSlider.rx.value
+      .map { String(Int($0)) }
+      .bind(to: blueValueLabel.rx.text )
+      .disposed(by: bag)
+    
+    Observable
+      .combineLatest([redSlider.rx.value, greenSlider.rx.value, blueSlider.rx.value])
+      .map { UIColor(red: CGFloat($0[0]) / 255, green: CGFloat($0[1]) / 255, blue: CGFloat($0[2]) / 255, alpha: 1) }
+      .bind(to: colorView.rx.backgroundColor)
+      .disposed(by: bag)
+    
+    resetButton.rx.tap
+      .subscribe(onNext: { [weak self] in
+        self?.colorView.backgroundColor = .black
+        
+        self?.redSlider.value = 0
+        self?.greenSlider.value = 0
+        self?.blueSlider.value = 0
+        
+        self?.redValueLabel.text = "0"
+        self?.greenValueLabel.text = "0"
+        self?.blueValueLabel.text = "0"
+      })
+      .disposed(by: bag)
+    
+    setupUI()
+  }
+  
+  private func setupUI() {
+    view.addSubview(colorView)
+    
+    view.addSubview(redSlider)
+    view.addSubview(greenSlider)
+    view.addSubview(blueSlider)
+    
+    view.addSubview(redValueLabel)
+    view.addSubview(greenValueLabel)
+    view.addSubview(blueValueLabel)
+    
+    view.addSubview(resetButton)
+    
+    view.addSubview(redLabel)
+    view.addSubview(greenLabel)
+    view.addSubview(blueLabel)
+    
+    setupConstraints()
+  }
+  private func setupConstraints() {
+    colorView.snp.makeConstraints {
+      $0.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(50)
+      $0.width.equalToSuperview().multipliedBy(0.7)
+      $0.centerX.equalToSuperview()
+      $0.height.equalTo(100)
+    }
+    
+    redSlider.snp.makeConstraints {
+      $0.centerX.equalToSuperview()
+      $0.top.equalTo(colorView.snp.bottom).offset(30)
+      $0.width.equalTo(colorView)
+    }
+    
+    greenSlider.snp.makeConstraints {
+      $0.centerX.equalToSuperview()
+      $0.top.equalTo(redSlider.snp.bottom).offset(20)
+      $0.width.equalTo(redSlider)
+    }
+    
+    blueSlider.snp.makeConstraints {
+      $0.centerX.equalToSuperview()
+      $0.top.equalTo(greenSlider.snp.bottom).offset(20)
+      $0.width.equalTo(redSlider)
+    }
+    
+    redValueLabel.snp.makeConstraints {
+      $0.centerY.equalTo(redSlider)
+      $0.leading.equalTo(redSlider.snp.trailing).offset(10)
+    }
+    
+    greenValueLabel.snp.makeConstraints {
+      $0.centerY.equalTo(greenSlider)
+      $0.leading.equalTo(greenSlider.snp.trailing).offset(10)
+    }
+    
+    blueValueLabel.snp.makeConstraints {
+      $0.centerY.equalTo(blueSlider)
+      $0.leading.equalTo(blueSlider.snp.trailing).offset(10)
+    }
+    
+    redLabel.snp.makeConstraints {
+      $0.trailing.equalTo(redSlider.snp.leading).inset(-10)
+      $0.centerY.equalTo(redSlider)
+    }
+    greenLabel.snp.makeConstraints {
+      $0.trailing.equalTo(greenSlider.snp.leading).inset(-10)
+      $0.centerY.equalTo(greenSlider)
+    }
+    blueLabel.snp.makeConstraints {
+      $0.trailing.equalTo(blueSlider.snp.leading).inset(-10)
+      $0.centerY.equalTo(blueSlider)
+    }
+    
+    resetButton.snp.makeConstraints {
+      $0.centerX.equalToSuperview()
+      $0.top.equalTo(blueSlider.snp.bottom).offset(50)
+      $0.height.equalTo(50)
+    }
+  }
+}
+```
+
+
+
+---
+
+### Driver
+
+RxCocoa가 제공하는 Traits 중 가장 핵심적인 것이 Driver이다. Driver는 데이터를 UI에 바인딩하는 직관적이고 효율적인 방법을 제공한다. 
+
+#### Driver의 특징
+
+![스크린샷 2020-06-15 오전 2.17.09](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfsbos8v58j30ox0fx3ze.jpg)
+
+Driver는 특별한 Observable이고 UI 처리에 특화된 몇 가지 특징을 가진다.
+
+- Driver는 에러 이벤트를 전달하지 않는다. 그래서 오류로 인해 UI 처리가 중단되는 상황이 발생하지 않는다. 
+
+- 스케쥴러를 강제로 변경하는 경우를 제외하고, 항상 MainScheduler에서 작업을 수행한다. Event는 항상 MainScheduler에서 전달되고, 이어지는 작업 역시 MainScheduler에서 실행된다. 
+- Driver는 Side Effect를 공유한다. 다시 말해 일반 Observable에서 share 연산자를 호출하고, 화면에 있는 파라미터를 전달한 것과 동일하게 동작한다. 
+  - ![스크린샷 2020-06-15 오전 2.19.31](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfsbqp1x17j30lj0ee0tw.jpg)
+  - 이렇게 모든 구독자가 시퀀스를 공유하고, 새로운 구독이 시작되면 가장 최근에 전달됐던 Event가 즉시 전달된다. 
+
+---
+
+#### Driver를 이용한 구현 예제
+
+- ##### 초기 세팅
+
+![화면 기록 2020-06-15 오전 3.17.39.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfsdgemo9gg30720dwnir.gif)
+
+UITextField에 입력된 text가 숫자일 경우 statusLable은 파란 배경색의 "OK". requestButton의 text color는 파란색. text가 숫자가 아닐 경우 빨간 배경색의 "Error"와 회색 글씨로 바뀐다.
+
+```swift
+  private func validateText(value: String?) -> Observable<Bool> {
+    return Observable<Bool>.create { observer in
+      
+      print("=== validate \(value ?? "") start")
+      
+      defer {
+        print("=== validate \(value ?? "") end")
+      }
+      
+      guard let str = value, let _ = Double(str) else {
+        observer.onError(MyError.error)
+        return Disposables.create()
+      }
+      
+      observer.onNext(true)
+      observer.onCompleted()
+      
+      return Disposables.create()
+    }
+  }
+```
+
+우선 textField에 입력된 text를 파라미터로 받아 `Observable<Bool>`을 리턴하는 text 판별용 함수를 하나 만든다.
+
+```swift
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    let result = textField.rx.text // #1
+      .flatMapLatest { // #2
+        self.validateText(value: $0) // #3
+          .observeOn(MainScheduler.instance) // #5
+          .catchErrorJustReturn(false) // #4
+    }
+    .share() // #6
+  }
+```
+
+그리고 viewDidLoad에 
+
+`textField.rx.text`가 방출하는 next event의 요소에 따라 앞에 만든 `validateText(value:_)` 함수가 리턴하게 될 Observable이 저장될 `result`를 만든다. (`#1`)
+
+Observable이 방출하는 가장 최근 항목을 새로운 Observable로 리턴하는 `flatMapLatest` 연산자를 사용하고(`#2`), 
+
+`flatMapLatest` 연산자의 클로저 내에서 `validateText(value:_)` 함수에 `textField.rx.text`이 방출하는 text를 파라미터로 전달한다. (`#3`)
+
+ `textField.rx.text`가 방출한 next event에 숫자가 아닌 경우 `validateText(value:_)`가 리턴하는 Observable이 에러 이벤트를 전달하므로,
+
+`catchErrorJustReturn` 연산자를 이용하여 에러 이벤트를 처리해준다.(`#4`)
+
+또 이 작업이 background Thread에서 실행될 잠재적인 위험을 피하기 위해 `#5`에서 스케쥴러를 직접 지정해준다.
+
+마지막으로, `result`에 추가될 구독자가 여럿일 경우 중복실행을 방지하기 위해 `share()` 연산자를  사용해준다.(`#6`)
+
+
+
+```swift
+    result
+      .map { $0 ? "OK" : "Error"}
+      .bind(to: statusLabel.rx.text)
+      .disposed(by: bag)
+    
+    result
+      .map { $0 ? UIColor.blue : UIColor.red }
+      .bind(to : statusLabel.rx.backgroundColor)
+      .disposed(by: bag)
+    
+    result
+      .map { $0 }
+      .bind(to: requestButton.rx.isEnabled)
+      .disposed(by: bag)
+```
+
+
+
+그렇게 만들어진 result가 방출하는 event를 map 연산자를 통해 가공하고, 해당 값이 필요한 대상에 바인딩한다.
+
+---
+
+- ##### Drive를 사용한 코드로 수정
+
+```swift
+    let result = textField.rx.text.asDriver() // #1
+      .flatMapLatest {
+        self.validateText(value: $0)
+        .asDriver(onErrorJustReturn: false) // #3
+    }
+// #2
+```
+
+Driver는 사용자가 직접 생성하지 않는다. `asDriver` 메서드를 사용하여 일반 Observable을 Driver로 변환해야한다. `#1`에 추가해준다. 
+
+또 Driver는 시퀀스를 공유하기 때문에 `#2`에 있던 `share` 연산자도 삭제해준다.
+
+`#3`에 있던 observeOn, catchErrorJustReturn 두 개의 연산자도 필요없어졌으므로 삭제해준다. 
+
+Driver는 모든 작업이 Main Thread에서 실행되는 것을 보장하고, `.asDriver(onErrorJustReturn:_)` 연산자를 사용하면 에러 이벤트가 전달될 경우 사용할 기본 값을 지정해줄 수 있기 때문이다.
+
+![스크린샷 2020-06-15 오전 3.48.29](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfseb6rkilj30rd0arwgv.jpg)
+
+여기까지 수정하면 아래의 `bind` 메서드들에서 에러가 발생한다. 
+
+Driver를 사용할 때에는 `bind(to:_)` 메서드 대신 `drive` 메서드를 사용해야한다.
+
+```swift
+    result
+      .map { $0 ? "OK" : "Error"}
+      .drive(statusLabel.rx.text)
+      .disposed(by: bag)
+    
+    result
+      .map { $0 ? UIColor.blue : UIColor.red }
+      .drive(statusLabel.rx.backgroundColor)
+      .disposed(by: bag)
+    
+    result
+      .map { $0 }
+      .drive(requestButton.rx.isEnabled)
+      .disposed(by: bag)
+```
+
+이렇게 바꿔주면 된다.
+
+코드는 간결해졌지만 실행해보면 정상적으로 작동하는 것을 확인할 수 있다. 
+
+시퀀스는 하나만 생성되고, 에러가 발생할 경우에도 UI가 정상적으로 업데이트 된다.
+
+- Driver는 모든 작업이 Main Thread에서 실행되는 것을 보장하기 때문에 따로 스케쥴러를 지정해줄 필요가 없다.
+- Driver는 시퀀스를 공유하기 때문에 시퀀스 중복 생성으로 인한 불필요한 리소스 낭비를 막아준다.
+- 또 에러 처리까지 단순하게 구현할 수 있다. 
+
+위와 같은 장점들이 있기 때문에 UI Binding을 구현할 때 적극적으로 활용하면 좋다.
+
+위에 구현한 예제의 전체 코드는 다음과 같다. RxSwift, RxCocoa 이외에 부가적으로 SnapKit과 Then도 사용하였다.
+
+```swift
+import UIKit
+import RxSwift
+import RxCocoa
+
+enum MyError: Error {
+  case error
+}
+
+class DriveUsedUIViewController: UIViewController {
+  
+  let bag = DisposeBag()
+  
+  let textField = UITextField().then {
+    $0.placeholder = "Input text for request"
+    $0.borderStyle = .line
+    $0.text = "1234"
+  }
+  let statusLabel = UILabel().then {
+    $0.text = "OK"
+    $0.backgroundColor = .blue
+    $0.textColor = .white
+    $0.font = UIFont.systemFont(ofSize: 22)
+  }
+  lazy var requestButton = UIButton().then {
+    $0.setTitle("Request!", for: .normal)
+    $0.isEnabled = true
+    $0.setTitleColor(UIColor.blue, for: .normal)
+    $0.setTitleColor(UIColor.gray, for: .disabled)
+    $0.titleLabel?.font = UIFont.systemFont(ofSize: 22)
+  }
+  
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    let result = textField.rx.text.asDriver()
+      .flatMapLatest {
+        self.validateText(value: $0)
+        .asDriver(onErrorJustReturn: false)
+    }
+    
+    result
+      .map { $0 ? "OK" : "Error"}
+      .drive(statusLabel.rx.text)
+      .disposed(by: bag)
+    
+    result
+      .map { $0 ? UIColor.blue : UIColor.red }
+      .drive(statusLabel.rx.backgroundColor)
+      .disposed(by: bag)
+    
+    result
+      .map { $0 }
+      .drive(requestButton.rx.isEnabled)
+      .disposed(by: bag)
+    
+    setupUI()
+  }
+  
+  private func validateText(value: String?) -> Observable<Bool> {
+    return Observable<Bool>.create { observer in
+      
+      print("=== validate \(value ?? "") start")
+      
+      defer {
+        print("=== validate \(value ?? "") end")
+      }
+      
+      guard let str = value, let _ = Double(str) else {
+        observer.onError(MyError.error)
+        return Disposables.create()
+      }
+      
+      observer.onNext(true)
+      observer.onCompleted()
+      
+      return Disposables.create()
+    }
+  }
+  
+  private func setupUI() {
+    view.addSubview(textField)
+    view.addSubview(statusLabel)
+    view.addSubview(requestButton)
+    setupConstraints()
+  }
+  
+  private func setupConstraints() {
+    textField.snp.makeConstraints {
+      $0.centerX.equalToSuperview()
+      $0.top.equalTo(view.safeAreaLayoutGuide).offset(100)
+      $0.width.equalToSuperview().multipliedBy(0.7)
+    }
+    
+    statusLabel.snp.makeConstraints {
+      $0.top.equalTo(textField.snp.bottom).offset(30)
+      $0.centerX.equalToSuperview()
+    }
+    
+    requestButton.snp.makeConstraints {
+      $0.top.equalTo(statusLabel.snp.bottom).offset(50)
+      $0.centerX.equalToSuperview()
+    }
+  }
+}
+
+```
+
+
+
+---
+
+
 
