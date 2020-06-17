@@ -113,6 +113,7 @@
     - [기존 Cocoa에서의 AlertController 사용](#%EA%B8%B0%EC%A1%B4-cocoa%EC%97%90%EC%84%9C%EC%9D%98-alertcontroller-%EC%82%AC%EC%9A%A9)
     - [RxCocoa에서의 AlertController 사용](#rxcocoa%EC%97%90%EC%84%9C%EC%9D%98-alertcontroller-%EC%82%AC%EC%9A%A9)
   - [Notification Center in RxCocoa](#notification-center-in-rxcocoa)
+  - [Gesture with RxCocoa](#Gesture-with-RxCocoa)
 
 ---
 
@@ -8059,6 +8060,115 @@ Observable.merge(willshowObservable, willHideObservable)
 실행 결과는 똑같기 때문에 따로 확인하지 않는다.
 
 - Notification Observer를 추가하고 해제하는 과정이 자동으로 처리하기 때문에 Notification 구현 코드가 간단해진다는 장점이 있다.
+
+---
+
+### Gesture with RxCocoa
+
+
+
+![화면 기록 2020-06-17 오전 11.04.31.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfv263ngrbg30ak0iadn1.gif)
+
+구현 목표
+
+- 화면 가운데에 있는 파란색 targetView를 탭한 상태로 움직이면 뷰가 함께 움직인다.
+
+---
+
+기존 Cocoa 방식으로 구현한 코드는 다음과 같다.
+
+```swift
+import UIKit
+
+class CocoaTouchGestureViewController: UIViewController {
+   
+   @IBOutlet weak var targetView: UIView!
+   
+   @IBAction func handlePangesture(_ sender: UIPanGestureRecognizer) {
+      guard let target = sender.view else { return }
+    
+      let translation = sender.translation(in: view)
+      
+      target.center.x += translation.x
+      target.center.y += translation.y
+      
+      sender.setTranslation(.zero, in: view)
+   }
+   
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+      targetView.center = view.center
+   }   
+}
+```
+
+---
+
+
+
+먼저 UIGestureRecognizer+Rx.swift 문서를 보자.
+
+![스크린샷 2020-06-17 오전 11.08.12](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfv29ardkmj30oe0rgjwx.jpg)
+
+첫 번째로 나오는 클래스는 내부적으로 사용되고, GestureRecognizer와 액션을 연결하는 부분을 처리한다.
+
+![스크린샷 2020-06-17 오전 11.09.18](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfv2afys8wj30pz0hotby.jpg)
+
+아래 쪽에 있는 extension을 보면, 활용할 수 있는 Event 속성이 ControlEvent 형식으로 선언되어 있다. 
+
+GestureRecognizer에서 새로운 Event가 발생할 때마다 next event를 방출한다. 
+
+next event에는 GestureRecognizer가 저장되어 있어서 Gesture와 관련된 모든 정보를 얻을 수 있다.
+
+초기 세팅은 다음과 같다.
+
+```swift
+class RxCocoaGestureViewController: UIViewController {
+   
+   let bag = DisposeBag()
+   
+   @IBOutlet weak var targetView: UIView!
+   
+   @IBOutlet var panGesture: UIPanGestureRecognizer!
+   
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+      targetView.center = view.center
+      
+      
+   }   
+}
+```
+
+여기의 viewDidLoad에서, Event 속성에 구독자를 추가해준다.
+
+```swift
+    panGesture.rx.event
+      .subscribe(onNext: { [unownd self] gesture in
+        // #1
+      })
+    .disposed(by: bag)
+```
+
+`#1`에 targetView.center 속성을 이동한 거리만큼 업데이트 하는 코드를 작성해준다.
+
+```swift
+    panGesture.rx.event
+      .subscribe(onNext: { [unowned self] gesture in
+        guard let target = gesture.view else { return }
+        let translation = gesture.translation(in: self.view )
+        
+        target.center.x += translation.x
+        target.center.y += translation.y
+        
+        gesture.setTranslation(translation, in: self.view)
+      })
+    .disposed(by: bag)
+```
+
+실행해보면 잘 작동한다.
 
 ---
 
