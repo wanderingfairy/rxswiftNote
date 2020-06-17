@@ -101,6 +101,18 @@
   - [Driver](#driver)
     - [Driver의 특징](#driver%EC%9D%98-%ED%8A%B9%EC%A7%95)
     - [Driver를 이용한 구현 예제](#driver%EB%A5%BC-%EC%9D%B4%EC%9A%A9%ED%95%9C-%EA%B5%AC%ED%98%84-%EC%98%88%EC%A0%9C)
+- [20. RxCocoa Common Patterns](#20.-rxcocoa-common-patterns)
+  - [RxCocoa TableView](#rxcocoa-tableview)
+    - [기본 Cell(Standard Cell) 사용 방법](#%EA%B8%B0%EB%B3%B8-cellstandard-cell-%EC%82%AC%EC%9A%A9-%EB%B0%A9%EB%B2%95)
+    - [Custom Cell 사용 방법](#custom-cell-%EC%82%AC%EC%9A%A9-%EB%B0%A9%EB%B2%95)
+    - [itemSelected Event 처리](#itemselected-event-%EC%B2%98%EB%A6%AC)
+    - [RxCocoa와 Cocoa Delegate Pattern을 함께 사용하는 방법](#rxcocoa%EC%99%80-cocoa-delegate-pattern%EC%9D%84-%ED%95%A8%EA%BB%98-%EC%82%AC%EC%9A%A9%ED%95%98%EB%8A%94-%EB%B0%A9%EB%B2%95)
+  - [RxCocoa CollectionView](#rxcocoa-collectionview)
+    - [CollectionView item Selected Event 처리](#collectionview-item-selected-event-%EC%B2%98%EB%A6%AC)
+  - [Alert Controller](#alert-controller)
+    - [기존 Cocoa에서의 AlertController 사용](#%EA%B8%B0%EC%A1%B4-cocoa%EC%97%90%EC%84%9C%EC%9D%98-alertcontroller-%EC%82%AC%EC%9A%A9)
+    - [RxCocoa에서의 AlertController 사용](#rxcocoa%EC%97%90%EC%84%9C%EC%9D%98-alertcontroller-%EC%82%AC%EC%9A%A9)
+  - [Notification Center in RxCocoa](#notification-center-in-rxcocoa)
 
 ---
 
@@ -7015,4 +7027,1038 @@ class DriveUsedUIViewController: UIViewController {
 ---
 
 
+
+## 20. RxCocoa Common Patterns
+
+### RxCocoa TableView
+
+```swift
+class RxCocoaTableViewViewController: UIViewController {
+   
+   @IBOutlet weak var listTableView: UITableView!
+   
+   let priceFormatter: NumberFormatter = {
+      let f = NumberFormatter()
+      f.numberStyle = NumberFormatter.Style.currency
+      f.locale = Locale(identifier: "Ko_kr")
+      
+      return f
+   }()
+   
+   let bag = DisposeBag()
+  
+  let nameObservable = Observable.of(appleProducts.map { $0.name } )
+  
+  let productObservable = Observable.of(appleProducts)
+   
+         
+   
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+     
+   }
+}
+```
+
+초기 세팅. DataSource와 Delegate가 연결되어있지 않다. RxCocoa에서는 TableView를 델리게이트 패턴으로 구현하지 않는다. 대신 Observable을 테이블뷰에 바인딩 한다.
+
+먼저 테이블 뷰에 바인딩할 Observable이 필요하다. 그리고 이 Observable은 테이블뷰에 표시할 데이터를 방출한다. 
+
+먼저 문자열과 제품목록을 방출할 때 필요한 Observable을 생성해 준다. 
+
+```swift
+  let nameObservable = Observable.of(appleProducts.map { $0.name } )
+  
+  let productObservable = Observable.of(appleProducts)
+   
+```
+
+![스크린샷 2020-06-17 오전 6.43.31](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuulyoclyj30lq0tpn2u.jpg)
+
+그리고 나서 TableView+Rx.swift 문서를 보자.
+
+Observable을 테이블 뷰에 바인딩할 때는, `items` 메서드를 사용한다. 바로 위에 있는 주석에 샘플 코드가 나와있으니 참고해서 어떻게 구현하는지 공부해보자.
+
+이 아래쪽에는 몇 가지 오버로딩 메서드가 구현되어 있다. 기본 셀을 사용하는가 아니면 커스텀 셀을 사용하는가에 따라 사용하는 메서드가 달라진다. 
+
+---
+
+#### 기본 Cell(Standard Cell) 사용 방법
+
+먼저 `nameObservable`과 테이블뷰를 바인딩하자. 여기에서는 기본 셀, Standard Cell을 사용하겠다.
+
+```swift
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+    // #1
+    nameObservable.bind(to: listTableView.rx.items)
+     
+   }
+```
+
+이렇게 한 뒤에 클로저를 전달한다. 
+
+클로저에는 테이블뷰 참조, row index, element(표시할 요소)가 순서대로 전달된다. 
+
+전달되는 요소의 형식은 Observable이 방출하는 요소의 형식과 동일하다.
+
+클로저에서 셀을 구성한 뒤 리턴하자.
+
+```swift
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+    // #1
+    nameObservable.bind(to: listTableView.rx.items) { tableView, row, element in
+      
+      let cell = tableView.dequeueReusableCell(withIdentifier: "standardCell")!
+      cell.textLabel?.text = element
+      return cell
+    }
+   .disposed(by: bag)
+   }
+```
+
+![스크린샷 2020-06-17 오전 6.51.46](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuuuh0x7aj30al0ijabq.jpg)
+
+그러면 이렇게 Observable이 방출하는 요소들이 테이블뷰에 표현된다.
+
+다른 items 메서드를 사용해서 더 간단하게 구현해볼 수 있다.
+
+```swift
+    nameObservable.bind(to: listTableView.rx.items(cellIdentifier: "standardCell")) { row, element, cell in
+      
+      
+    }
+```
+
+이번에는 Cell identifier를 파라미터로 전달 받는 items 메서드를 사용했다. 
+
+이렇게 하면 재사용 큐에서 Cell을 꺼낸 다음 클로저로 전달해준다. 그래서 클로저로 전달되는 파라미터가 이전과 조금 달라진다.
+
+첫 번째로 row index, 두 번째는 Observable이 방출하는 요소, 마지막으로 cell이 전달된다.
+
+이전과 같은 코드를 더 짧게 구성할 수 있다.
+
+```swift
+    nameObservable.bind(to: listTableView.rx.items(cellIdentifier: "standardCell")) { row, element, cell in
+      
+      cell.textLabel?.text = element
+      
+    }
+   .disposed(by: bag)
+```
+
+이전 경우와 달리 클로저에서 cell을 리턴할 필요도 없다. cell 구성을 제외한 나머지 요소는 모두 자동으로 처리된다. 실행결과는 이전과 동일하지만 코드가 더 간단해졌다.
+
+Cocoa에서 TableView를 구현하던 과정을 생각해보면, 많이 간결해졌다는 걸 알 수 있다. datasource를 연결하고 필수 메서드를 구현할 필요가 없어졌다.
+
+1. 데이터를 방출하는 Observable과 tableView를 바인딩하고, 
+2. 클로저에서 셀을 구성하는 것으로 끝난다.
+
+---
+
+#### Custom Cell 사용 방법
+
+![스크린샷 2020-06-17 오전 7.00.13](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuv3aw4knj30cy06t3zr.jpg)
+
+우선 Custom Cell의 모습은 다음과 같다.
+
+![스크린샷 2020-06-17 오전 7.00.56](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuv40vt22j30k607zq6o.jpg)
+
+기본 셀을 사용할 경우 클로저에서 cell의 타입을 확인해보면 UITableViewCell이라고 나온다.
+
+여기에서 커스텀 셀로 타입 캐스팅 해줘도 되지만, 
+
+일반적으로는 셀 타입을 파라미터로 전달하는 방식으로 구현한다.
+
+```swift
+    productObservable.bind(to: listTableView.rx.items(cellIdentifier: "productCell", cellType: ProductTableViewCell.self)) { row, element, cell in
+      
+    }
+```
+
+이렇게 Cell identifier와 Cell Type을 파라미터로 함께 전달한다. 클로저로 전달되는 파라미터는 이전과 동일하다. 
+
+다만 이 items 메서드를 사용할 경우 클로저가 마지막으로 전달하는 `cell`은 `cellType:`에 파라미터로 전달한 `ProductTableViewCell.self` 타입으로 타입 캐스팅 되어서 전달된다.
+
+그래서 연결된 커스텀 셀의 요소에 접근할 때 별도의 타입 캐스팅이 필요 없다. 
+
+```swift
+    //#3 Custom Cell
+    
+    productObservable.bind(to: listTableView.rx.items(cellIdentifier: "productCell", cellType: ProductTableViewCell.self)) { [weak self] row, element, cell in
+      
+      cell.categoryLabel.text = element.category
+      cell.productNameLabel.text = element.name
+      cell.summaryLabel.text = element.summary
+      cell.priceLabel.text = self?.priceFormatter.string(from: NSNumber(value: element.price))
+    }
+   .disposed(by: bag)
+```
+
+![스크린샷 2020-06-17 오전 7.08.10](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuvbjr62qj30ax0itq5n.jpg)
+
+이번에는 커스텀셀을 통해 제품의 상세 정보와 가격이 표시된다. 
+
+---
+
+#### itemSelected Event 처리
+
+셀을 탭하면 선택된 제품의 이름이 콘솔에 출력되도록 해보자.
+
+Cocoa Touch에서 선택 이벤트를 처리하고 싶다면 Delegate method를 구현해야한다.
+
+RxCocoa에서는 Extension에 추가되어있는 Observable을 구독하는 방식으로 처리할 수 있다.
+
+![스크린샷 2020-06-17 오전 7.11.18](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuvetrhe9j30p70b4gnp.jpg)
+
+TableView+Rx.swift에 보면 itemSelected 속성이 ControlEvent형식으로 선언되어 있다.
+
+이 속성은 셀을 선택할 때마다 next Event를 방출한다. 그리고 next event에는 indexPath가 저장되어 있다. 셀을 선택했을 때 indexPath가 필요하다면 주로 이 속성을 사용한다.
+
+이 아래 쪽에는 자주 사용되는 델리게이트 메서드들이 선언되어있다.
+
+![스크린샷 2020-06-17 오전 7.13.35](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuvh6kn26j30n90iaadu.jpg)
+
+그 중에 modelSelected라는 메서드가 있다. 이 메서드가 리턴하는 ControlEvent는 itemSelected와 달리 indexPath가 아닌 실제 모델 데이터를 방출한다. 그래서 모델 타입을 파라미터로 전달해야한다.
+
+`public func modelSelected<T>(_ modelType: T.Type)`(T.Type 부분)
+
+이 메서드를 사용해서 구현해보자.
+
+```swift
+listTableView.rx.modelSelected(Product.self)
+```
+
+파라미터로 Product 타입을 전달했다.
+
+![스크린샷 2020-06-17 오전 7.16.48](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuvkiq85vj306o04st92.jpg)
+
+Product 타입은 이렇게 생겼다.
+
+
+
+그 다음 새로운 구독자를 추가하고, 선택한 셀의 상품 이름이 콘솔에 출력되도록 하자.
+
+```swift
+    listTableView.rx.modelSelected(Product.self)
+      .subscribe(onNext: { product in
+        print(product.name)
+      })
+    .disposed(by: bag)
+```
+
+![스크린샷 2020-06-17 오전 7.19.34](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuvnflnkpj30ai0is411.jpg)
+
+
+
+![스크린샷 2020-06-17 오전 7.19.16](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuvn2n58zj30ae02daa6.jpg)
+
+셀을 탭할 때마다 잘 출력된다.
+
+
+
+지금은 셀을 선택하면 선택 상태가 유지되고 있는데, 선택 상태를 제거하자.
+
+```swift
+    listTableView.rx.itemSelected
+      .subscribe(onNext: { [weak self] indexPath in
+        self?.listTableView.deselectRow(at: indexPath, animated: true)
+      })
+    .disposed(by: bag)
+```
+
+선택한 셀의 indexPath가 필요하니 itemSelected를 구독한다.
+
+그리고 subscribe의 클로저에서 `deselectRow`를 이용해 선택된 셀을 다시 해제해준다.
+
+이렇게 하면 선택 상태가 바로 제거된다.
+
+<img src="https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuvraydijg30ce0nc7wh.gif" alt="화면 기록 2020-06-17 오전 7.22.41.mov" style="zoom:67%;" />
+
+---
+
+이번에는 앞에서 구현한 두 작업을 하나로 합쳐보자.
+
+`itemSelected`와 `modelSelected`메서드는 모두 ControlEvent를 방출한다. 각각
+
+indexPath와 모델 데이터를 방출하는데, 항상 매칭되는 데이터를 방출한다.
+
+예를 들어 첫 번째 셀을 선택하면, 첫 번째 indexPath와 첫 번째 데이터를 방출한다.
+
+그래서 두 개의 ControlEvent를 `zip`연산자로 병합할 수 있다.
+
+```swift
+    Observable.zip(listTableView.rx.modelSelected(Product.self), listTableView.rx.itemSelected)
+```
+
+그리고 보통 이 경우에는 `subscribe` 메서드를 사용하지만, 이번에는 `bind(to:_)`메서드를 사용하겠다.  
+
+```swift
+    Observable.zip(listTableView.rx.modelSelected(Product.self), listTableView.rx.itemSelected)
+      .bind { [weak self] (product, indexPath) in
+        self?.listTableView.deselectRow(at: indexPath, animated: true)
+        print(product.name)
+    }
+   .disposed(by: bag)
+```
+
+실행 결과는 이전과 동일하다.
+
+- 선택 이벤트를 처리하면서 데이터가 필요하다면 modelSelected method를 활용한다.
+- 그냥 indexPath만으로 충분하다면 itemSelected 메서드를 이용한다.
+- 만약 둘 다 필요하다면 `zip` 연산자로 병합해서 구현하는 것도 가능하다
+
+---
+
+#### RxCocoa와 Cocoa Delegate Pattern을 함께 사용하는 방법
+
+RxCocoa에서는 Cocoa의 델리게이트 메서드들을 활용할 수 없을까? 
+
+활용할 수 있지만 델리게이트를 지정하는 방식이 다르다.
+
+
+
+우선 Cocoa와 같은 방식으로 델리게이트를 지정하는 방법을 사용해보자.
+
+```swift
+    listTableView.delegate = self
+```
+
+델리게이트를 지정해주고,
+
+```swift
+  extension RxCocoaTableViewViewController: UITableViewDelegate {
+  func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    print(#function)
+  }
+}
+```
+
+아래 쪽에 extention을 만들어 선택 이벤트 발생시 로그를 출력해보자.
+
+![스크린샷 2020-06-17 오전 7.33.28](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuw1vn9t1j30vo0nan7k.jpg)
+
+그리고 나서 셀을 선택해보면, 이전에 `zip` 연산자를 이용한 처리의 결과 등이 갑자기 출력되지 않고,
+
+지금 Delegate 메서드에서 구현한 로그만 출력된다.
+
+- Cocoa 방식의 델리게이트를 구현하면 RxCocoa로 구현한 코드는 더 이상 동작하지 않는다
+
+그래서 델리게이트를 지정할 때에는 방금 전의 `listTableView.delegate = self` 처럼 직접 접근하면 안 된다.
+
+![스크린샷 2020-06-17 오전 7.37.01](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuw5l8w65j30r606u445.jpg)
+
+델리게이트를 지정할 때에는 이렇게 `setDelegate`메서드를 사용해야한다. 
+
+(`setDataSource` 메서드도 있긴 하지만 거의 사용되지 않는다.)
+
+```swift
+    listTableView.rx.setDelegate(self)
+```
+
+이렇게 사용하는데, 여기서 끝내면 안 되고 DisposeBag에 넣어서 정리해줘야한다.
+
+```swift
+    listTableView.rx.setDelegate(self)
+    .disposed(by: bag)
+```
+
+![스크린샷 2020-06-17 오전 7.39.14](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuw7vmx4gj30x00os7fe.jpg)
+
+이제 실행해보면, 델리게이트 메서드에서 구현한 코드(로그)가 먼저 실행되고 이어서 RxCocoa로 바인딩한 코드(`Product.name`)가 출력된다.
+
+이렇게 델리게이트를 직접 지정하면 익숙한 Delegate pattern을 RxCocoa와 함께 활용할 수 있다.
+
+---
+
+이후 셀의 삭제와 이동을 구현해야하는데, RxCocoa가 제공하는 Extension으로는 구현하기 어렵다. 
+
+불가능한 것은 아니지만 코드가 필요 이상으로 복잡해진다. 이때 선택할 수 있는 옵션은 두 가지 이다.
+
+- RxCocoa를 사용하지 않고 기존 델리게이트 패턴만으로 구현하거나
+- RxDataSource를 사용하는 것이다.
+
+---
+
+### RxCocoa CollectionView
+
+
+
+![스크린샷 2020-06-17 오전 7.48.09](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuwh5qe2pj30cc0op0y0.jpg)
+
+구현 목표
+
+- Collection View는 컬러 목록을 그리드 뷰로 표시한다. 
+- 셀 전체를 백그라운드 컬러로 채우고, Lable에 16진수 컬러값을 출력한다. 
+- 셀 크기는 화면 너비에서 여백을 제외한 너비를 2등분 하고, 높이는 너비와 동일하다.
+- 셀을 탭하면 콘솔에 컬러값이 출력된다. 
+
+![스크린샷 2020-06-17 오전 7.52.10](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuwlc0rcqj30oy0u9dlz.jpg)
+
+![스크린샷 2020-06-17 오전 7.53.58](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuwn7y4wyj30os0ykgsv.jpg)
+
+우선 UICollectionView + Rx.swift 문서를 보면, extension에 구현되어있는 메서드들은 TableView+Rx와 유사하다.
+
+Observable과 컬렉션뷰를 바인딩할 때는 위와 같이 items 메서드를 사용한다. 
+
+컬렉션뷰에서는 Cell identifier와 셀 타입을 함께 전달하는 두 번째 메서드를 주로 사용한다.
+
+
+
+그리고 아래쪽으로 내려가보면 다양한 Delegate 메서드들이 Rx로 구현되어 있다.
+
+![스크린샷 2020-06-17 오전 7.55.08](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuwof9l3rj30ok08lac2.jpg)
+
+`itemSelected`, `itemDeselected`, `itemHighlighted`, `itemUnhighlighted` 처럼 이름만으로 쉽게 파악할 수 있는 ControlEvent 속성을 제공한다.
+
+
+
+![스크린샷 2020-06-17 오전 7.56.34](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuwpvuwysj30ow0gydjs.jpg)
+
+조금 더 내려가보면 테이블 뷰와 마찬가지로 modelSelected 메서드를 함께 제공한다. 
+
+---
+
+```swift
+class RxCocoaCollectionViewViewController: UIViewController {
+   
+   let bag = DisposeBag()
+   
+   @IBOutlet weak var listCollectionView: UICollectionView!
+   
+   
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+      
+   }
+}
+//컬렉션뷰 아이템 크기 설정 
+//지금은 아직 작동하지 않음 (delegate가 지정되어있지 않기 때문에)
+extension RxCocoaCollectionViewViewController: UICollectionViewDelegateFlowLayout {
+  func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+    guard let flowLayout = collectionViewLayout as? UICollectionViewFlowLayout else {
+      return CGSize.zero
+    }
+    
+    let value = (collectionView.frame.width - (flowLayout.sectionInset.left + flowLayout.sectionInset.right + flowLayout.minimumInteritemSpacing)) / 2
+    return CGSize(width: value, height: value)
+  }
+}
+```
+
+Cocoa에서는 배열에 저장된 데이터를 컬렉션 뷰에 표시한다.
+
+RxCocoa에서는 Observable을 컬렉션 뷰에 바인딩한다.
+
+먼저 바인딩할 Observable을 생성한다.
+
+```swift
+  let colorObservable = Observable.of(MaterialBlue.allColors)
+```
+
+![스크린샷 2020-06-17 오전 8.02.53](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuwwiq4dhj30ph0fa0y0.jpg)
+
+`MaterialBlue.allColors`는 이렇게 선언되어 있다.
+
+
+
+RxCocoa에서는 DataSource와 Delegate를 직접 연결하지 않는다.
+
+여기에서는 `bind(to:_)` 메서드를 활용해서 컬렉션뷰에 바인딩해보자.
+
+이렇게하면 방출되는 요소가 컬렉션 뷰에 표시된다.
+
+```swift
+    colorObservable.bind(to: listCollectionView.rx.items(cellIdentifier: "colorCell", cellType: ColorCollectionViewCell.self)) { index, color, cell in
+      
+    }
+```
+
+컬렉션 뷰를 구현할 때에는 셀의 identifier와 Type을 파라미터로 전달하는 `items` 메서드를 주로 사용한다.
+
+셀 구성은 클로저가 담당한다. 클로저에는 item Index, model data, collectionView Cell이 순서대로 전달된다.
+
+재사용 큐에서 셀을 꺼내고 다시 컬렉션 뷰에 리턴하는 것은 모두 자동으로 처리된다. 그래서 클로저에서는 셀을 구성하는 코드만 작성한다.
+
+```swift
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    colorObservable.bind(to: listCollectionView.rx.items(cellIdentifier: "colorCell", cellType: ColorCollectionViewCell.self)) { index, color, cell in
+      
+      cell.backgroundColor = color
+      cell.hexLabel.text = color.rgbHexString
+      
+    }
+    .disposed(by: bag)
+  }
+}
+```
+
+![스크린샷 2020-06-17 오전 8.05.20](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuwz20up8j313g0lb47i.jpg)
+
+이제 실행해보면 이렇게 컬러 목록이 표시되고 레이블에 컬러값이 표시된다.
+
+하지만 셀 크기를 보면 디자인 타임에 지정한 크기로 표시되고 있다. 
+
+이 부분은 조금 뒤에 수정하기로 하고, 셀 선택 이벤트부터 처리해보자.
+
+---
+
+#### CollectionView item Selected Event 처리
+
+선택 이벤트를 처리할 때 indexPath가 필요하다면 itemSelected 속성을 사용하고,
+
+모델 데이터가 필요하다면 modelSelected 속성을 사용한다.
+
+셀을 선택하면 컬러값을 출력하고 싶다면 modelSelected 속성이 더 적합하다.
+
+```swift
+    listCollectionView.rx.modelSelected(UIColor.self)
+```
+
+그리고 파라미터에는 모델 데이터(`MaterialBlue.allColors`)의 형식인 `UIColor`를 전달했다.
+
+이 상태에서 구독자를 추가하여 16진수 컬러값이 출력되도록 하자.
+
+```swift
+    listCollectionView.rx.modelSelected(UIColor.self)
+      .subscribe(onNext: { color in
+        print(color.rgbHexString)
+      })
+    .disposed(by: bag)
+```
+
+
+
+그 전에, 아래 쪽의 extension을 보면 셀 사이즈를 지정하는 델리게이트 메서드가 구현되어 있다. 
+
+하지만 지금은 뷰 컨트롤러가 컬렉션 뷰의 델리게이트로 지정되어있지 않아서 이 메서드는 호출되지 않는다.
+
+viewDidLoad에서 ViewController를 delegate로 지정해준다.
+
+```swift
+    listCollectionView.delegate = self
+```
+
+![스크린샷 2020-06-17 오전 8.15.11](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfux9a1m6aj30di0lb0xx.jpg)
+
+이제 셀 크기는 의도한대로 표시된다. 그런데 셀을 탭해도 콘솔에 컬러값이 출력되지 않는다. 
+
+테이블 뷰와 마찬가지로, 이처럼 delegate를 직접 지정할 경우 RxCocoa가 추가한 extention이 정상적으로 동작하지 않는다. 
+
+RxCocoa extention과 delegate 메서드를 함께 사용할 때에는 `setDelegate`메서드를 사용해야 한다.
+
+```swift
+    listCollectionView.rx.setDelegate(self)
+```
+
+![스크린샷 2020-06-17 오전 8.17.55](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuxc4s21mj30s30nswmm.jpg)
+
+다시 실행하고 셀을 선택해보면 이번에는 컬러값이 정상적으로 출력된다. 여기까지가 가장 기본적인 구현 방법이다. 
+
+두 개 이상의 섹션을 표시하거나 편집 기능을 구현해야 한다면 RxCocoa가 제공하는 Extension만으로는 부족하다. 이때는 RxDataSource 라이브러리와 델리게이트 패턴 메서드를 적절히 조합하여 사용해야한다.
+
+---
+
+### Alert Controller
+
+![화면 기록 2020-06-17 오전 8.26.43.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuxm5hnckg30800dwu0y.gif)
+
+구현 목표는 위와 같다.
+
+1. 첫 버튼을 누르면 현재 컬러의 16진수값이 출력되는 Alert
+2. 현재 컬러를 블랙으로 리셋시킬 수 있는 Alert
+3. 액션 시트를 활용하여 컬러 목록을 보여주고, 선택할 경우 해당 컬러로 변환되는 Alert
+
+
+
+RxCocoa에서 얼럿을 구현하는 방법이 특별히 다르지는 않다.
+
+UIAlertController를 사용하 UIAlertAction을 추가하는 건 동일하다.
+
+차이점은 액션 버튼을 생성할 때 전달하는 클로저의 역할이다.
+
+---
+
+##### 기존 Cocoa에서의 AlertController 사용
+
+우선 기존 Cocoa에서 첫 번째 AlertController를 구현하는 코드는 다음과 같다.
+
+```swift
+let alert = UIAlertController(title: "Current Color", message: colorView.backgroundColor?.rgbHexString, preferredStyle: .alert)
+      
+      let okAction = UIAlertAction(title: "Ok", style: .default) { [weak self] (action) in
+         print(self?.colorView.backgroundColor?.rgbHexString ?? "")
+      }
+      alert.addAction(okAction)
+      
+      present(alert, animated: true, completion: nil)
+```
+
+여기서 UIAlertAction의 클로저를 보면
+
+```swift
+      let okAction = UIAlertAction(title: "Ok", style: .default) { [weak self] (action) in
+         print(self?.colorView.backgroundColor?.rgbHexString ?? "") // #1
+      }
+      alert.addAction(okAction)
+```
+
+`#1`에서 버튼과 연관된 코드를 직접 작성해준 걸 확인할 수 있다.
+
+---
+
+##### RxCocoa에서의 AlertController 사용
+
+RxCocoa에서는 AlertController를 Observable로 wrapping한 다음, 액션에서 이벤트를 방출하는 패턴으로 구현한다.
+
+- 초기 세팅은 다음과 같다.
+
+```swift
+class RxCocoaAlertViewController: UIViewController {
+   
+   let bag = DisposeBag()
+   
+   @IBOutlet weak var colorView: UIView!
+   
+   @IBOutlet weak var oneActionAlertButton: UIButton!
+   
+   @IBOutlet weak var twoActionsAlertButton: UIButton!
+   
+   @IBOutlet weak var actionSheetButton: UIButton!
+   
+   
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+      
+   }
+}
+
+enum ActionType {
+   case ok
+   case cancel
+}
+```
+
+여기에 우선 새로운 extension을 추가한다.
+
+```swift
+extension UIViewController {
+  
+}
+```
+
+그리고 이곳에서, 하나의 액션을 표시하는 경고창을 래핑한다.
+
+```swift
+extension UIViewController {
+  func info(title: String, message: String? = nil) -> Observable<ActionType> {
+    
+  }
+}
+```
+
+리턴 타입은 ActionType을 방출하는 Observable로 선언했다. 
+
+액션 타입은 위에 선언한 열거형 `ActionType`이고, 어떤 액션을 선택했는지 파악하기 위해 사용한다. 
+
+지금은 경고창에서 액션을 선택했을 때 추가적인 작업을 구현하기 위해서 액션 타입을 사용하고 있지만, 
+
+이러한 작업이 필요 없다면 Observable이 방출하는 타입을 `Void`로 선언하거나 `Completable`로 선언해도 문제가 없다. 
+
+이어서 create 연산자로 새로운 Observable을 만든다.
+
+```swift
+extension UIViewController {
+  func info(title: String, message: String? = nil) -> Observable<ActionType> {
+    
+    return Observable.create { [weak self] observer in } // #1
+    
+  }
+}
+```
+
+경고창을 표시하는 코드는 Cocoa와 약간의 차이가 있지만 비슷하다. 우선 다음과 같이 작성한다.
+
+```swift
+extension UIViewController {
+  func info(title: String, message: String? = nil) -> Observable<ActionType> {
+    
+    return Observable.create { [weak self] observer in
+      
+      let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+      
+      let okAction = UIAlertAction(title: "OK", style: .default) { _ in
+       observer.onNext(.ok) // #2
+       observer.onCompleted() // #3
+                                                                  
+      }
+      alert.addAction(okAction)
+      
+      self?.present(alert, animated: true, completion: nil)
+                              
+      return Disposables.create {
+        alert.dismiss(animated: true, completion: nil) // #1
+      }                        
+    }
+  }
+}
+
+```
+
+Cocoa와 RxCocoa의 구현 방식간의 첫 번째 차이는 `#1`에서 발생한다. 
+
+보통 Observable을 create 메서드로 생성하면  마지막에 Disposable을 생성해서 리턴하는 것으로 끝나는데, 
+
+Alert을 구현할 때에는 Disposables의 생성 시점에 클로저를 전달하고 AlertController를 dismiss한다.
+
+
+
+두 번째 차이는 `#2`에서 액션과 연관된 기능을 구현하는 것이 아니라, 이벤트를 전달하도록 구현한다는 것이다. `#2`에서는 ok Action을 전달했다.
+
+지금 구현한 이 첫 번째 경고창은 액션을 선택한 다음 사라지기 때문에, 또 다른 next event를 방출하지 않는다. 그렇기 때문에 `#3`에 작성한 것처럼 바로 Completed event를 전달하고 종료되어야한다.
+
+이렇게 구현하면 경고창에서 액션을 탭하는 시점에 `#2`의 next event가 전달된다. 그러면 구독자에게 전달된 액션 타입을 확인하고 원하는 기능을 구현할 수 있다. 
+
+이제 버튼을 탭하면 경고창이 표시되게 해보자.
+
+```swift
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    
+    oneActionAlertButton.rx.tap
+    .flatMap { [unowned self] in self.info(title: "Current Color", message: self.colorView.backgroundColor?.rgbHexString) }
+  }
+```
+
+먼저 버튼의 탭 이벤트에 `flatmap` 연산자를 통해 방금 extention에서 구현한 `info` 메서드가 리턴하는 Observable을 그대로 리턴한다.
+
+이렇게 하면 tap 속성이 전달하는 이벤트 대신 Alert Action에서 전달하는 이벤트가 구독자에게 전달된다.
+
+이어서 구독자를 추가한다.
+
+```swift
+    oneActionAlertButton.rx.tap
+      .flatMap { [unowned self] in self.info(title: "Current Color", message: self.colorView.backgroundColor?.rgbHexString) }
+      .subscribe(onNext: { [unowned self] actionType in
+        // #1
+      })
+    .disposed(by: bag)
+```
+
+`#1`의 클로저에 actionType으로 전달되는 요소의 타입은 열거형 `ActionType`을 방출하는 `Observable<ActionType>`이다. 잠시 흐름을 정리하자면 다음과 같다.
+
+1. oneActionAlertButton에서 tap 이벤트가 발생하면 rx.tap이 nextEvent를 방출한다.
+2. 이 nextEvent는 flatMap 연산자를 거치게 되는데, flatMap 연산자는 이때 info 메서드를 호출한다.
+3.  info 메서드가 호출되면, info 메서드가 리턴하는 Observable이 얼럿 컨트롤러를 만들고 Alert Action을 추가한다.
+4. 이 Alert Action의 클로저에서 전달하는 `observer.onNext(.ok)`이 `Observable<ActionType>`이기 때문에 flatMap이후의 구독자에게 next(.ok)가 전달된다. 그것이 `#1`의 클로저에 전달된`actionType` 이다.
+5. 이 Alert Action 클로저는 해당 Alert Action이 눌리면 실행된다.
+
+
+
+여기에서는 ok Action이 전달되면 background Color 값을 콘솔에 출력하도록 해보자.
+
+```swift
+    oneActionAlertButton.rx.tap
+      .flatMap { [unowned self] in self.info(title: "Current Color", message: self.colorView.backgroundColor?.rgbHexString) }
+      .subscribe(onNext: { [unowned self] actionType in
+        switch actionType {
+        case .ok:
+          print(self.colorView.backgroundColor?.rgbHexString ?? "")
+        default:
+          break
+        }
+      })
+    .disposed(by: bag)
+```
+
+![스크린샷 2020-06-17 오전 9.21.52](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuz6nkcrej30vt0i4q7h.jpg)
+
+실행해보면 정상적으로 출력된다. 
+
+---
+
+경고창에 Action을 하나 더 추가해보자. 이전에 `info` 메서드를 선언했던 extension에 작성한다.
+
+```swift
+ func alert(title: String, message: String? = nil) -> Observable<ActionType> {
+    return Observable.create { [weak self] observer in
+      
+      let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+      
+      let okAction = UIAlertAction(title: "OK", style: .default) { _ in
+        observer.onNext(.ok)
+        observer.onCompleted()
+      }
+      alert.addAction(okAction)
+      
+      // #1
+       let cancelAction = UIAlertAction(title: "Cancel", style: .cancel) { _ in
+        observer.onNext(.cancel)
+        observer.onCompleted()
+      }
+      alert.addAction(cancelAction)
+                              
+      self?.present(alert, animated: true, completion: nil)
+      
+      return Disposables.create {
+        alert.dismiss(animated: true, completion: nil)
+      }
+    }
+  }
+```
+
+얼럿 액션이 하나 더 추가되는 점을 제외하면, 코드는 이전과 같다. 그래서 내부 코드를 복사 붙여넣기 한 뒤에 `#1`에 cancel Action을 추가했다.
+
+다시 viewDidLoad로 가서 이전과 같은 방법으로 경고창을 표시하는 코드를 작성하자.
+
+이번에는 두 번째 버튼을 탭하면 작동하도록 하자.
+
+```swift
+    twoActionsAlertButton.rx.tap
+      .flatMap { [unowned self] in self.alert(title: "Reset Color", message: "Reset to black color?")}
+```
+
+이전과 동일한 방식이다.
+
+이번에는, OK 버튼을 탭하면 백그라운드 컬러를 검은색으로 초기화하도록 하자.
+
+```swift
+    twoActionsAlertButton.rx.tap
+      .flatMap { [unowned self] in self.alert(title: "Reset Color", message: "Reset to black color?")}
+      .subscribe(onNext: { [unowned self] actionType in
+        switch actionType {
+        case .ok:
+          self.colorView.backgroundColor = UIColor.black
+        default:
+          break
+        }
+      })
+    .disposed(by: bag)
+```
+
+실행해보면 잘 동작한다.
+
+---
+
+마지막으로 다수의 Alert Action을 액션 시트에 표시하고, 구독자에서 개별 액션을 처리해보자.
+
+```swift
+ //extension UIViewController 
+func colorActionSheet(colors: [UIColor], title: String, message: String? = nil) -> Observable<UIColor> { // #1
+    return Observable.create { [weak self] observer in
+      
+      let actionSheet = UIAlertController(title: title, message: message, preferredStyle: .actionSheet)
+                              
+// #2
+  }
+```
+
+액션 시트에서 컬러를 선택하면 view의 백그라운드 컬러를 바꾸는 것이 목적이다. 
+
+그러면 구독자에서 필요한 것은 UIColor이다. 그래서 Observable이 방출하는 형식을 UIColor로 설정했다.
+
+ 이제 파라미터로 전달한 UIColor의 갯수만큼 얼럿 액션을 추가하는 코드를 `#2`에 작성하자.
+
+```swift
+      for color in colors {
+        let colorAction = UIAlertAction(title: color.rgbHexString, style: .default) { _ in
+          //#1
+        }
+        actionSheet.addAction(colorAction)
+      }
+
+
+// #2
+let cancelAction = UIAlertAction(title: "Cancel", style: .cancel) { _ in
+        observer.onCompleted()
+      }
+      actionSheet.addAction(cancelAction)
+      
+      self?.present(actionSheet, animated: true, completion: nil)
+      
+      return Disposables.create {
+        actionSheet.dismiss(animated: true, completion: nil)
+      }
+```
+
+
+
+`#2`부터는 얼럿 컨트롤러를 구현하기 위한 나머지 코드로 이전과 모두 동일하다.
+
+이제 `#1`에서 next event를 방출하면서, 선택한 컬러를 함께 방출해주자.
+
+```swift
+      for color in colors {
+        let colorAction = UIAlertAction(title: color.rgbHexString, style: .default) { _ in
+          observer.onNext(color)
+          observer.onCompleted()
+        }
+        actionSheet.addAction(colorAction)
+      }
+```
+
+
+
+viewDidLoad로 가서, 세 번째 버튼이 눌리면 방금 만든 액션 시트를 표시해주는 코드를 작성하자.
+
+```swift
+    actionSheetButton.rx.tap
+      .flatMap { [unowned self] in
+        self.colorActionSheet(colors: MaterialBlue.allColors, title: "Change Color", message: "Choose one") }
+      .subscribe(onNext: { [unowned self] color in
+      self.colorView.backgroundColor = color
+    })
+      .disposed(by: bag)
+```
+
+![화면 기록 2020-06-17 오전 9.44.43.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfuzv5orrhg30800dwb2a.gif)
+
+잘 작동한다.
+
+
+
+---
+
+### Notification Center in RxCocoa
+
+![화면 기록 2020-06-17 오전 9.51.47.mov](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfv02h8udxg30800dw1l2.gif)
+
+텍스트 뷰를 탭하면 FirstResponder가 되는데, 이때 KeyboardWillShowNotification과 KeyboardDidShowNotification이 순서대로 전달된다. 예제에서는 KeyboardWillShowNotification에 대한 Notification을 추가하고, 키보드 높이만큼 하단 여백을 추가하고 있다. 그래서 TextView 아래 쪽에 키보드 높이만큼의 여백이 추가된다. 
+
+네비게이션 바에 있는 Toggle 버튼을 탭하면 키보드가 토글된다. 
+
+키보드가 사라지면, 아래 쪽에 추가한 여백이 제거된다.
+
+![스크린샷 2020-06-17 오전 10.29.47](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfv15bfn6pj30pm0hdq6w.jpg)
+
+우선 NotificationCenter + Rx.swift 파일을 보면 하나의 메서드가 구현되어 있다. 
+
+파라미터로 Notification name과 object를 전달하면, Notification을 방출하는 Observable이 리턴된다. 
+
+![스크린샷 2020-06-17 오전 10.31.04](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfv16oyytjj30mq033aap.jpg)
+
+이 부분에서 옵저버를 추가하고 있고, 여기에서 말하는 옵저버는 Notification Observer이다.
+
+노티피케이션이 전달되면, 노티피케이션 객체가 저장된 next Event가 방출된다. 
+
+
+
+![스크린샷 2020-06-17 오전 10.32.19](https://tva1.sinaimg.cn/large/007S8ZIlgy1gfv17yc0udj30bd02saab.jpg)
+
+Observable이 Dispose 되는 시점에는 노티피케이션 옵저버를 제거하고 있다.
+
+노티피케이션 옵저버 추가와 제거가 자동으로 처리되기 때문에 기존 Cocoa에 비해 코드가 단순해진다. 
+
+```swift
+class RxCocoaNotificationCenterViewController: UIViewController {
+   
+   let bag = DisposeBag()
+   
+   @IBOutlet weak var textView: UITextView!
+   
+   @IBOutlet weak var toggleButton: UIBarButtonItem!
+   
+   override func viewDidLoad() {
+      super.viewDidLoad()
+      
+      toggleButton.rx.tap
+         .subscribe(onNext: { [unowned self] in
+            if self.textView.isFirstResponder {
+               self.textView.resignFirstResponder()
+            } else {
+               self.textView.becomeFirstResponder()
+            }
+         })
+         .disposed(by: bag)
+      
+      
+      
+   }
+   
+   override func viewWillDisappear(_ animated: Bool) {
+      super.viewWillDisappear(animated)
+      
+      if textView.isFirstResponder {
+         textView.resignFirstResponder()
+      }
+   }
+}
+
+```
+
+초기 세팅은 위와 같다.
+
+먼저 viewDidLoad에서 KeyboardWillShowNotification부터 처리해주자.
+
+```swift
+    let willshowObservable = NotificationCenter.default.rx.notification(UIResponder.keyboardWillShowNotification)
+```
+
+그리고  `map`연산자를 활용해서 노티피케이션에 포함된 키보드 높이를 리턴해준다.
+
+```swift
+    let willshowObservable = NotificationCenter.default.rx.notification(UIResponder.keyboardWillShowNotification)
+      .map { ($0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue.height ?? 0}
+```
+
+이제 구독자를 추가하고 텍스트 뷰 하단에 여백을 추가하면 되는데
+
+예제에서는 willShow 노티피케이션과 더불어 키보드가 사라질 때의 willHide 노티피케이션도 처리해야하고 마찬가지로 하단 여백을 바꿔야한다. 그래서 두 Observable을 merge해서 처리해주기로 한다.
+
+우선 `willHideObservable`을 만들고, 해당 노티피케이션이 발생하면 0을 리턴해주도록 한다.
+
+```swift
+    let willHideObservable = NotificationCenter.default.rx.notification(UIResponder.keyboardWillHideNotification)
+      .map { noti -> CGFloat in 0}
+```
+
+그리고나서 `merge`연산자를 활용해서 두 Observable을 merge 해준다. 
+
+```swift
+Observable.merge(willshowObservable, willHideObservable)
+```
+
+이렇게하면 높이값이 전달된다.
+
+이제 `map`연산자로 높이값을 inset으로 변환해주자.
+
+```swift
+Observable.merge(willshowObservable, willHideObservable)
+      .map { [unowned self] height -> UIEdgeInsets in
+        var inset = self.textView.contentInset
+        inset.bottom = height
+        return inset
+    }
+```
+
+마지막으로 여기에 구독자를 추가하고 전달된 inset을 반영한다.
+
+```swift
+    Observable.merge(willshowObservable, willHideObservable)
+      .map { [unowned self] height -> UIEdgeInsets in
+        var inset = self.textView.contentInset
+        inset.bottom = height
+        return inset
+    }
+    .subscribe(onNext: { [weak self] inset in
+      UIView.animate(withDuration: 0.3) {
+        self?.textView.contentInset = inset
+      }
+    })
+      .disposed(by: bag)
+```
+
+실행 결과는 똑같기 때문에 따로 확인하지 않는다.
+
+- Notification Observer를 추가하고 해제하는 과정이 자동으로 처리하기 때문에 Notification 구현 코드가 간단해진다는 장점이 있다.
+
+---
 
