@@ -2,6 +2,8 @@
 ---
 이 레포는 RxSwift 공부를 하며 정리한 내용입니다.
 
+이 내용은 제 블로그(https://iospanda.tistory.com/) 에도 동일하게 게재되어 있습니다.
+
 
 
 # RxSwift 정리
